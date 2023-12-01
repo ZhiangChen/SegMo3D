@@ -60,7 +60,15 @@ def read_camera_intrinsics_webodm(file_path):
         [0, 0, 1]
     ])
 
-    return intrinsic_matrix 
+    k1 = camera_intrinsics["k1"]
+    k2 = camera_intrinsics["k2"]
+    p1 = camera_intrinsics["p1"]
+    p2 = camera_intrinsics["p2"]
+    k3 = camera_intrinsics["k3"]
+
+    distortion_params = np.array([k1, k2, p1, p2, k3])
+
+    return intrinsic_matrix, distortion_params
 
 def read_camera_extrinsics_webodm(file_path):
     # check if the file exists
