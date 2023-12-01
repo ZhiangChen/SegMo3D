@@ -3,6 +3,7 @@ import os
 import numpy as np
 import json
 import xml.etree.ElementTree as ET
+import cv2
 
 
 def read_las_file(file_path):
@@ -41,7 +42,25 @@ def read_camera_intrinsics_webodm(file_path):
     camera_name = list(data.keys())[0]
     camera_intrinsics = data[camera_name]
 
-    return camera_intrinsics 
+    focal_x = camera_intrinsics["focal_x"]
+    focal_y = camera_intrinsics["focal_y"]
+    c_x = camera_intrinsics["c_x"]
+    c_y = camera_intrinsics["c_y"]
+    width = camera_intrinsics["width"]
+    height = camera_intrinsics["height"]
+
+    # Get the camera intrinsics
+    f_x = f_y = focal_x * width 
+    c_x = c_x * width + width/2
+    c_y = c_y * height + height/2
+
+    intrinsic_matrix = np.array([
+        [f_x, 0, c_x],
+        [0, f_y, c_y],
+        [0, 0, 1]
+    ])
+
+    return intrinsic_matrix 
 
 def read_camera_extrinsics_webodm(file_path):
     # check if the file exists
@@ -54,60 +73,78 @@ def read_camera_extrinsics_webodm(file_path):
     # Get the camera extrinsics
     features = data["features"]
     
-    camera_list = []
-    for camera in features:
-        camera_list.append(camera["properties"])
+    cameras = dict()
 
-    return camera_list
+    width = features[0]["properties"]["width"]
+    height = features[0]["properties"]["height"]
 
-def read_camera_intrinsics_agisoft(file_path):
-    # read camera intrinsics from agisoft xml file
+    cameras["width"] = width
+    cameras["height"] = height
+
+    for feature in features:
+        camera = feature["properties"]
+        # Get the extrinsics
+        translation_vector = np.array(camera["translation"]).reshape(-1, 1)
+        rotation_vector = camera["rotation"]
+
+        # Create rotation matrix
+        rotation_matrix, _ = cv2.Rodrigues(np.array(rotation_vector))
+
+        # Combine into a 4x4 extrinsic matrix
+        extrinsic_matrix = np.hstack((rotation_matrix.T, translation_vector))
+        extrinsic_matrix = np.vstack((extrinsic_matrix, [0, 0, 0, 1]))
+        cameras[camera["filename"]] = extrinsic_matrix
+
+    return cameras
+
+
+
+
+def read_camera_parameters_agisoft(file_path):
     # check if the file exists
     assert os.path.exists(file_path)
-
-    # Parse the XML file
-    tree = ET.parse(file_path)
-    root = tree.getroot()
-
-    # Find the calibration element and extract the parameters
-    calibration = root.find('.//calibration')
-
-    f = float(calibration.find('f').text)
-    cx = float(calibration.find('cx').text)
-    cy = float(calibration.find('cy').text)
-    k1 = float(calibration.find('k1').text)
-    k2 = float(calibration.find('k2').text)
-    k3 = float(calibration.find('k3').text)
-    p1 = float(calibration.find('p1').text)
-    p2 = float(calibration.find('p2').text)
-
-    # Create the camera intrinsics matrix
-    camera_intrinsics = np.array([[f, 0, cx],
-                                  [0, f, cy],
-                                  [0, 0, 1]])
-    
-    # Create the distortion coefficients
-    distortion_coefficients = np.array([k1, k2, p1, p2, k3])
-
-    return camera_intrinsics, distortion_coefficients
-
-def read_camera_extrinsics_agisoft(file_path):
-    # read camera extrinsics from agisoft xml file
-    # check if the file exists
-    assert os.path.exists(file_path)
-
-    # Parse the XML file
-    tree = ET.parse(file_path)
-    root = tree.getroot()
 
     cameras = dict()
 
+    # Parse the XML file
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+
+    # Extract image dimensions
     image_dimensions = root.find('.//ImageDimensions')
     width = int(image_dimensions.find('Width').text)
     height = int(image_dimensions.find('Height').text)
 
     cameras['width'] = width
     cameras['height'] = height
+
+    # Get camera intrinsics
+    sensor_size_mm = root.find('.//SensorSize').text
+    focal_length_mm = root.find('.//FocalLength').text
+
+    # Convert Focal Length from mm to pixels if needed
+    f_x = f_y = width * float(focal_length_mm) / float(sensor_size_mm)
+
+    cx = float(root.find('.//PrincipalPoint/x').text)
+    cy = float(root.find('.//PrincipalPoint/y').text)
+
+    # Intrinsic Matrix
+    K = [[f_x, 0, cx],
+        [0, f_y, cy],
+        [0, 0, 1]]
+    
+    cameras['K'] = np.asarray(K)
+
+    # Extract Distortion Parameters
+    k1 = float(root.find('.//Distortion/K1').text)
+    k2 = float(root.find('.//Distortion/K2').text)
+    k3 = float(root.find('.//Distortion/K3').text)
+    p1 = float(root.find('.//Distortion/P1').text)
+    p2 = float(root.find('.//Distortion/P2').text)
+
+    distortion_params = [k1, k2, p1, p2, k3]
+    
+    cameras['distortion_params'] = distortion_params
 
     # Iterate over each photo and extract extrinsic matrices
     for photo in tree.findall('.//Photo'):
@@ -155,6 +192,7 @@ def read_camera_extrinsics_agisoft(file_path):
     return cameras
 
 
+
 def write_las(points, colors, filename):
     """
     Write points and colors to a LAS file.
@@ -193,18 +231,14 @@ if __name__ == "__main__":
     las_file = "../../data/model.las"
     #points, colors = read_las_file(las_file)
 
-    #camera_intrinsics_file = "../../data/camera.json"
-    #camera_intrinsics = read_camera_intrinsics_webodm(camera_intrinsics_file)
+    camera_intrinsics_file = "../../data/camera.json"
+    camera_intrinsics = read_camera_intrinsics_webodm(camera_intrinsics_file)
+    print(camera_intrinsics)
 
-    #camera_list_file = "../../data/shots.geojson"
-    #camera_list = read_camera_extrinsics_webodm(camera_list_file)
+    camera_list_file = "../../data/shots.geojson"
+    cameras = read_camera_extrinsics_webodm(camera_list_file)
 
     #write_las(points, colors, "test.las")
 
-    camera_intrinsics_file = "../../data/box_canyon_export/camera_intrinsics.xml"
-    camera_intrinsics, distortion_coefficients = read_camera_intrinsics_agisoft(camera_intrinsics_file)
-    print(camera_intrinsics, distortion_coefficients)
+    #cameras = read_camera_parameters_agisoft("../../data/box_canyon_export/camera_params.xml")
 
-    cameras = read_camera_extrinsics_agisoft("../../data/box_canyon_export/camera_extrinsics.xml")
-
-    print(cameras)
