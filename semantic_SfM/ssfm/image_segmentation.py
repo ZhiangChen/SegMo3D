@@ -1,0 +1,172 @@
+from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+import os
+import cv2
+import pickle
+import numpy as np
+
+"""
+SamAutomaticMaskGenerator
+    Arguments:
+        model (Sam): The SAM model to use for mask prediction.
+        points_per_side (int or None): The number of points to be sampled
+            along one side of the image. The total number of points is
+            points_per_side**2. If None, 'point_grids' must provide explicit
+            point sampling.
+        points_per_batch (int): Sets the number of points run simultaneously
+            by the model. Higher numbers may be faster but use more GPU memory.
+        pred_iou_thresh (float): A filtering threshold in [0,1], using the
+            model's predicted mask quality.
+        stability_score_thresh (float): A filtering threshold in [0,1], using
+            the stability of the mask under changes to the cutoff used to binarize
+            the model's mask predictions.
+        stability_score_offset (float): The amount to shift the cutoff when
+            calculated the stability score.
+        box_nms_thresh (float): The box IoU cutoff used by non-maximal
+            suppression to filter duplicate masks.
+        crop_n_layers (int): If >0, mask prediction will be run again on
+            crops of the image. Sets the number of layers to run, where each
+            layer has 2**i_layer number of image crops.
+        crop_nms_thresh (float): The box IoU cutoff used by non-maximal
+            suppression to filter duplicate masks between different crops.
+        crop_overlap_ratio (float): Sets the degree to which crops overlap.
+            In the first crop layer, crops will overlap by this fraction of
+            the image length. Later layers with more crops scale down this overlap.
+        crop_n_points_downscale_factor (int): The number of points-per-side
+            sampled in layer n is scaled down by crop_n_points_downscale_factor**n.
+        point_grids (list(np.ndarray) or None): A list over explicit grids
+            of points used for sampling, normalized to [0,1]. The nth grid in the
+            list is used in the nth crop layer. Exclusive with points_per_side.
+        min_mask_region_area (int): If >0, postprocessing will be applied
+            to remove disconnected regions and holes in masks with area smaller
+            than min_mask_region_area. Requires opencv.
+        output_mode (str): The form masks are returned in. Can be 'binary_mask',
+            'uncompressed_rle', or 'coco_rle'. 'coco_rle' requires pycocotools.
+            For large resolutions, 'binary_mask' may consume large amounts of
+            memory.
+
+https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/automatic_mask_generator.py
+"""
+
+class Image_Segmentation(object):
+    def __init__(self, params):
+        model_pool = ['sam']
+
+        model_name = params['model_name']
+
+        if model_name not in model_pool:
+            raise NotImplementedError('Model not implemented.')
+        elif model_name == 'sam':
+            assert os.path.exists(params['model_path']), 'Model path does not exist.'
+
+            sam_checkpoint = params['model_path']
+            model_type = params['model_type']
+            device = params['device']
+            points_per_side = params['points_per_side']
+            pred_iou_thresh = params['pred_iou_thresh']
+            stability_score_thresh = params['stability_score_thresh']
+
+            self.sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
+            self.sam.to(device=device)
+            
+            self.mask_generator = SamAutomaticMaskGenerator(
+                model=self.sam, 
+                points_per_side=points_per_side,
+                pred_iou_thresh=pred_iou_thresh,
+                stability_score_thresh=stability_score_thresh
+            )
+
+    def predict(self, image_path, maxium_size=1000):
+        """
+        Arguments:
+            image_path (str): Path to the image.
+            maxium_size (int): The maximum size of the image. If the image is larger than this, it will be resized.
+        """
+        assert os.path.exists(image_path), 'Image path does not exist.'
+        image = cv2.imread(image_path)
+
+        if image.shape[0] > maxium_size or image.shape[1] > maxium_size:
+            if image.shape[0] > image.shape[1]:
+                image = cv2.resize(image, (int(image.shape[1] * maxium_size / image.shape[0]), maxium_size))
+            else:
+                image = cv2.resize(image, (maxium_size, int(image.shape[0] * maxium_size / image.shape[1])))
+        else:
+            pass
+        
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        masks = self.mask_generator.generate(image)
+        self.image = image
+        return masks
+    
+    def save_pickle(self, masks, save_path):
+        with open(save_path, 'wb') as f:
+            pickle.dump(masks, f)
+
+    def save_overlap(self, masks, save_path):
+        """
+        Arguments:
+            masks (list): A list of masks.
+            save_path (str): The path to save the masks.
+        """
+        if len(masks) == 0:
+            raise ValueError('No masks to save.')
+            return
+        else:
+            sorted_anns = sorted(masks, key=(lambda x: x['area']), reverse=True)
+
+            img = np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1], 3))
+            for ann in sorted_anns:
+                m = ann['segmentation']
+                color_mask = np.concatenate([np.random.random(3)])
+                img[m] = color_mask
+        
+        # overlap self.image and img using the last channel of img as alpha channel
+        img = img * 255
+        img = img.astype(np.uint8)
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        img = cv2.addWeighted(img, 0.35, self.image, 0.65, 0)
+        cv2.imwrite(save_path, img)
+
+    def save_tiff(self, masks, save_path):
+        """
+        Arguments:
+            masks (list): A list of masks.
+            save_path (str): The path to save the masks.
+        """
+        if len(masks) == 0:
+            raise ValueError('No masks to save.')
+            return
+        else:
+            sorted_anns = sorted(masks, key=(lambda x: x['area']), reverse=True)
+
+            img = np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1]))
+            for id, ann in enumerate(sorted_anns):
+                m = ann['segmentation']
+                img[m] = id
+
+            cv2.imwrite(save_path, img)
+        
+
+if __name__ == '__main__':
+    params = {}
+    params['model_name'] = 'sam'
+    params['model_path'] = '../sam/sam_vit_h_4b8939.pth'
+    params['model_type'] = 'vit_h'
+    params['device'] = 'cuda:3'
+    params['points_per_side'] = 64
+    params['pred_iou_thresh'] = 0.96
+    params['stability_score_thresh'] = 0.92
+
+
+    image_segmentor = Image_Segmentation(params)        
+    image_path = '../../data/mission_2/DJI_0247.JPG'
+    masks = image_segmentor.predict(image_path)
+    image_segmentor.save_overlap(masks, './test.png')
+    image_segmentor.save_tiff(masks, './test.tiff')
+
+
+
+            
+                                    
+            
+
+
