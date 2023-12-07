@@ -106,6 +106,12 @@ def read_camera_extrinsics_webodm(file_path):
     return cameras
 
 
+def read_camera_parameters_webodm(intrinsic_file_path, extrinsic_file_path):
+    intrinsic_matrix, distortion_params = read_camera_intrinsics_webodm(intrinsic_file_path)
+    cameras = read_camera_extrinsics_webodm(extrinsic_file_path)
+    cameras["K"] = intrinsic_matrix
+    cameras["distortion_params"] = distortion_params
+    return cameras
 
 
 def read_camera_parameters_agisoft(file_path):
@@ -157,6 +163,7 @@ def read_camera_parameters_agisoft(file_path):
     # Iterate over each photo and extract extrinsic matrices
     for photo in tree.findall('.//Photo'):
         image_path = photo.find('ImagePath').text
+        image_path = os.path.basename(image_path)
         pose = photo.find('Pose')
 
         # Extract rotation matrix and translation vector

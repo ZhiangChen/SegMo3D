@@ -47,7 +47,7 @@ SamAutomaticMaskGenerator
 https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/automatic_mask_generator.py
 """
 
-class Image_Segmentation(object):
+class ImageSegmentation(object):
     def __init__(self, params):
         model_pool = ['sam']
 
@@ -126,7 +126,8 @@ class Image_Segmentation(object):
         img = cv2.addWeighted(img, 0.35, self.image, 0.65, 0)
         cv2.imwrite(save_path, img)
 
-    def save_tiff(self, masks, save_path):
+
+    def save_npy(self, masks, save_path):
         """
         Arguments:
             masks (list): A list of masks.
@@ -138,30 +139,28 @@ class Image_Segmentation(object):
         else:
             sorted_anns = sorted(masks, key=(lambda x: x['area']), reverse=True)
 
-            img = np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1]))
+            img = -np.ones((sorted_anns[0]['segmentation'].shape[0], sorted_anns[0]['segmentation'].shape[1]))
             for id, ann in enumerate(sorted_anns):
                 m = ann['segmentation']
                 img[m] = id
 
-            cv2.imwrite(save_path, img)
-        
+            np.save(save_path, img)
+
+sam_params = {}
+sam_params['model_name'] = 'sam'
+sam_params['model_path'] = '../sam/sam_vit_h_4b8939.pth'
+sam_params['model_type'] = 'vit_h'
+sam_params['device'] = 'cuda:3'
+sam_params['points_per_side'] = 64
+sam_params['pred_iou_thresh'] = 0.96
+sam_params['stability_score_thresh'] = 0.92
 
 if __name__ == '__main__':
-    params = {}
-    params['model_name'] = 'sam'
-    params['model_path'] = '../sam/sam_vit_h_4b8939.pth'
-    params['model_type'] = 'vit_h'
-    params['device'] = 'cuda:3'
-    params['points_per_side'] = 64
-    params['pred_iou_thresh'] = 0.96
-    params['stability_score_thresh'] = 0.92
-
-
-    image_segmentor = Image_Segmentation(params)        
+    image_segmentor = ImageSegmentation(sam_params)        
     image_path = '../../data/mission_2/DJI_0247.JPG'
     masks = image_segmentor.predict(image_path)
     image_segmentor.save_overlap(masks, './test.png')
-    image_segmentor.save_tiff(masks, './test.tiff')
+    image_segmentor.save_npy(masks, './test.npy')
 
 
 
