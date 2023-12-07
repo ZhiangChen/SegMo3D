@@ -43,8 +43,7 @@ def inquire_semantics(u, v, resize_factor, padded_segmentation, normalized_likel
         for j in range(-radius, radius + 1):
             semantic_id = padded_segmentation[v + j + radius, u + i + radius]
             if semantic_id != -1:
-                likelihood_index = (i + radius) * (2 * radius + 1) + (j + radius)
-                normalized_likelihoods[int(semantic_id)] += likelihoods[int(likelihood_index)]
+                normalized_likelihoods[int(semantic_id)] += likelihoods[int((i + radius) * (2 * radius + 1) + (j + radius))]
 
     # Normalize the likelihoods
     total_likelihood = np.sum(normalized_likelihoods)
@@ -75,37 +74,39 @@ def compute_gaussian_likelihood(radius, decaying):
 
 
 @jit(nopython=True)
-def add_color_to_points(associations, colors, random_colors, segmentation, image_height, image_width):
+def add_color_to_points(associations, colors, segmentation, image_height, image_width):
     """
     Arguments:
         associations (np.array): A 2D array of shape (N, 2) where N is the number of points.
         colors (np.array): A 2D array of shape (N, 3) where N is the number of points.
-        random_colors (list): A list of random colors.
         segmentation (np.array): The segmentation image.
-        cameras (dict): The camera parameters.
+        image_height (int): The height of the original image.
+        image_width (int): The width of the original image.
     """
-    resize_segmentation = 1000
+    # precompute likelihoods
     radius = 2
     decaying = 2
     likelihoods = compute_gaussian_likelihood(radius, decaying)
 
+    # Vectorized random color generation
+    N = int(np.ceil(segmentation.max()))
+    random_colors = np.random.randint(0, 255, (N, 3)).astype(np.int64)
+
+    # resize u,v to the size of segmentation image
+    resize_segmentation = max(segmentation.shape[0], segmentation.shape[1])
     if image_height > resize_segmentation or image_width > resize_segmentation:
         resize_factor = resize_segmentation / max(image_height, image_width)
         resize_height, resize_width = int(image_height * resize_factor), int(image_width * resize_factor)
     else:
         resize_height, resize_width = image_height, image_width
         resize_factor = 1
-
-    # pad segmentation image by the size of radius with -1
-    padded_segmentation = -np.ones((2*radius+resize_height+2, 2*radius+resize_width+2))
-    padded_segmentation[radius+1:radius+resize_height+1, radius+1:radius+resize_width+1] = segmentation
     
     # pad segmentation image by the size of radius with -1
     padded_segmentation = -np.ones((2*radius+resize_height+2, 2*radius+resize_width+2))
     padded_segmentation[radius+1:radius+resize_height+1, radius+1:radius+resize_width+1] = segmentation
 
+    # Allocate normalized_likelihoods outside the loop
     normalized_likelihoods = np.zeros(int(segmentation.max() + 1), dtype=np.float64)
-
 
     for i in range(associations.shape[0]):
         u, v = associations[i]
@@ -115,7 +116,7 @@ def add_color_to_points(associations, colors, random_colors, segmentation, image
             if normalized_likelihoods.max() > 0:
                 semantic_id = np.argmax(normalized_likelihoods)
                 colors[i] = random_colors[int(semantic_id) - 1]
-
+    
     return colors
 
 
@@ -212,24 +213,16 @@ if __name__ == "__main__":
 
         image, associations = probabilistic_projector.project('DJI_0247.JPG')
 
-        # generate colors to semantic ids
-        random_colors = []
-        segmentation = probabilistic_projector.segmentation
-        N = int(np.ceil(segmentation.max()))
-        for i in range(N):
-            # generate a random color   
-            color = np.random.randint(0, 255, (3,)).tolist()
-            random_colors.append(color)
-        random_colors = np.array(random_colors)
+        
         
 
         # add color to points
         t1 = time.time()
-        colors = add_color_to_points(associations, probabilistic_projector.colors, random_colors, segmentation, probabilistic_projector.image_height, probabilistic_projector.image_width)
+        colors = add_color_to_points(associations, probabilistic_projector.colors, probabilistic_projector.segmentation, probabilistic_projector.image_height, probabilistic_projector.image_width)
         t2 = time.time()
         print('Time for adding colors: ', t2 - t1)
 
-        write_las(probabilistic_projector.points, colors, "test.las")
+        write_las(probabilistic_projector.points, colors, "../../data/test.las")
 
 
 
