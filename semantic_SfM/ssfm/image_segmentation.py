@@ -48,22 +48,24 @@ https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/
 """
 
 class ImageSegmentation(object):
-    def __init__(self, params):
+    def __init__(self, configs):
+        self.configs = configs
+
         model_pool = ['sam']
 
-        model_name = params['model_name']
+        model_name = configs['model_name']
 
         if model_name not in model_pool:
             raise NotImplementedError('Model not implemented.')
         elif model_name == 'sam':
-            assert os.path.exists(params['model_path']), 'Model path does not exist.'
+            assert os.path.exists(configs['model_path']), 'Model path does not exist.'
 
-            sam_checkpoint = params['model_path']
-            model_type = params['model_type']
-            device = params['device']
-            points_per_side = params['points_per_side']
-            pred_iou_thresh = params['pred_iou_thresh']
-            stability_score_thresh = params['stability_score_thresh']
+            sam_checkpoint = configs['model_path']
+            model_type = configs['model_type']
+            device = configs['device']
+            points_per_side = configs['points_per_side']
+            pred_iou_thresh = configs['pred_iou_thresh']
+            stability_score_thresh = configs['stability_score_thresh']
 
             self.sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
             self.sam.to(device=device)
@@ -83,6 +85,7 @@ class ImageSegmentation(object):
         """
         assert os.path.exists(image_path), 'Image path does not exist.'
         image = cv2.imread(image_path)
+        self.image = image.copy()
 
         if image.shape[0] > maxium_size or image.shape[1] > maxium_size:
             if image.shape[0] > image.shape[1]:
@@ -92,10 +95,30 @@ class ImageSegmentation(object):
         else:
             pass
         
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        masks = self.mask_generator.generate(image)
-        self.image = image
+        if self.configs['model_name'] == 'sam':
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            masks = self.mask_generator.generate(image)
+        else:
+            raise NotImplementedError('Model not implemented.')
+        
         return masks
+    
+    def batch_predict(self, image_paths, save_folder_path, maxium_size=1000):
+        """
+        Arguments:
+            image_paths (list): A list of image paths.
+            save_folder_path (str): The path to save the masks.
+            maxium_size (int): The maximum size of the image. If the image is larger than this, it will be resized.
+        """
+        # create save folder if not exists
+        if not os.path.exists(save_folder_path):
+            os.makedirs(save_folder_path)
+
+        # predict and save npy
+        for image_path in image_paths:
+            masks = self.predict(image_path, maxium_size)
+            save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '.npy')
+            self.save_npy(masks, save_path)
     
     def save_pickle(self, masks, save_path):
         with open(save_path, 'wb') as f:
@@ -145,6 +168,7 @@ class ImageSegmentation(object):
                 img[m] = id
 
             np.save(save_path, img)
+
 
 sam_params = {}
 sam_params['model_name'] = 'sam'

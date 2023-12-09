@@ -28,13 +28,14 @@ def inquire_semantics(u, v, resize_factor, padded_segmentation, normalized_likel
         v (int): The v coordinate of the pixel in the original image.
         resize_factor (float): The factor to resize the segmentation image.
         padded_segmentation (np.array): The segmentation image padded by the size of radius with -1.
+        normalized_likelihoods (np.array): A 1D array of shape (N,) where N is the number of semantic classes. The index is the semantic.
         likelihoods (np.array): A 1D array of shape (N,) where N is the number of pixels with center of (u, v) and given radius. 
             The index is the sequence number of the pixel and the value is the precomputed likelihood.
         radius (int): The radius of the circle in segmentation image size. 
 
     Returns:
         normalized_likelihoods (np.array): A 1D array of shape (N,) where N is the number of semantic classes. The index is the semantic 
-            id and the value is the normalized likelihood.
+            id and the value is the normalized likelihood. 
     """
     u, v = int(u * resize_factor), int(v * resize_factor)
 
@@ -74,7 +75,7 @@ def compute_gaussian_likelihood(radius, decaying):
 
 
 @jit(nopython=True)
-def add_color_to_points(associations, colors, segmentation, image_height, image_width):
+def add_color_to_points(associations, colors, segmentation, image_height, image_width, radius=2, decaying=2):
     """
     Arguments:
         associations (np.array): A 2D array of shape (N, 2) where N is the number of points.
@@ -84,8 +85,6 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
         image_width (int): The width of the original image.
     """
     # precompute likelihoods
-    radius = 2
-    decaying = 2
     likelihoods = compute_gaussian_likelihood(radius, decaying)
 
     # Vectorized random color generation
@@ -120,7 +119,12 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
     return colors
 
 
-class ProbabilisticProjection(object):
+class PointcloudProjection(object):
+    """
+    This class is used to project the point cloud onto the image using projection. 
+    1. Read the point cloud and camera parameters: PointcloudProjection.read_pointcloud and PointcloudProjection.read_camera_parameters
+    2. Project the point cloud onto the image: PointcloudProjection.project
+    """
     def __init__(self) -> None:
         pass
 
@@ -191,6 +195,21 @@ class ProbabilisticProjection(object):
         image, z_buffer, associations = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
 
         return image, associations
+    
+    def batch_project(self, frame_keys, save_folder_path):
+        """
+        Arguments:
+            frame_keys (list): A list of frame keys.
+            save_folder_path (str): The path to save the images.
+        """
+        if not os.path.exists(save_folder_path):
+            os.makedirs(save_folder_path)
+
+        for frame_key in frame_keys:
+            image, associations = self.project(frame_key)
+            associations_path = os.path.join(save_folder_path, frame_key + '.npy')
+            np.save(associations_path, associations)
+            
 
 
 if __name__ == "__main__":
@@ -204,25 +223,23 @@ if __name__ == "__main__":
         masks = image_segmentor.predict(image_path)
         image_segmentor.save_npy(masks, '../../data/mission_2/DJI_0247.npy')
     else:
-        probabilistic_projector = ProbabilisticProjection()
-        probabilistic_projector.read_pointcloud('../../data/model.las')
+        pointcloud_projector = PointcloudProjection()
+        pointcloud_projector.read_pointcloud('../../data/model.las')
 
-        probabilistic_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+        pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
 
-        probabilistic_projector.read_segmentation('../../data/mission_2/DJI_0247.npy')
+        pointcloud_projector.read_segmentation('../../data/mission_2/DJI_0247.npy')
 
-        image, associations = probabilistic_projector.project('DJI_0247.JPG')
+        image, associations = pointcloud_projector.project('DJI_0247.JPG')
 
         
-        
-
         # add color to points
         t1 = time.time()
-        colors = add_color_to_points(associations, probabilistic_projector.colors, probabilistic_projector.segmentation, probabilistic_projector.image_height, probabilistic_projector.image_width)
+        colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width)
         t2 = time.time()
         print('Time for adding colors: ', t2 - t1)
 
-        write_las(probabilistic_projector.points, colors, "../../data/test.las")
+        #write_las(probabilistic_projector.points, colors, "../../data/test.las")
 
 
 
