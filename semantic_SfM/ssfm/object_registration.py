@@ -4,7 +4,7 @@ from ssfm.probabilistic_projection import *
 
 import os
 
-class InstanceRegistration(object):
+class ObjectRegistration(object):
     def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path):
         self.pointcloud_path = pointcloud_path
         self.segmentation_folder_path = segmentation_folder_path
@@ -33,18 +33,20 @@ class InstanceRegistration(object):
         for i in range(len(self.segmentation_file_paths)):
             self.segmentation_association_pairs.append((self.segmentation_file_paths[i], self.association_file_paths[i]))
 
-    def register(self):
+    def start_registration(self):
         pass            
 
 
 if __name__ == "__main__":
-    # segment the images
+    # Set paths
+    pointcloud_path = '../../data/model.las'
     segmentation_folder_path = '../../data/mission_2_segmentations'
     image_folder_path = '../../data/mission_2'
     association_folder_path = '../../data/mission_2_associations'
 
-    image_segmentor = ImageSegmentation(sam_params)
-    image_segmentor.batch_predict(image_folder_path, segmentation_folder_path)
+    # Create object registration object
+    object_registration = ObjectRegistration(pointcloud_path, segmentation_folder_path, association_folder_path)
+
 
 
 

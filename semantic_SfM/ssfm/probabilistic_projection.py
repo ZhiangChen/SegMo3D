@@ -4,6 +4,23 @@ from numba import jit
 
 @jit(nopython=True)
 def update_image_and_associations(image, z_buffer, points, colors, height, width):
+    """
+    Arguments:
+        image (np.array): The image to be updated. 2D array of shape (height, width, 3) with zeros.
+        z_buffer (np.array): The z-buffer to be updated. 2D array of shape (height, width) with inf.
+        points (np.array): The points to be projected onto the image. 2D array of shape (N, 3) where N is the number of points.
+        colors (np.array): The colors of the points. 2D array of shape (N, 3) where N is the number of points.
+        height (int): The height of the image. 
+        width (int): The width of the image. 
+
+    Returns:
+        image (np.array): The updated image. 
+        z_buffer (np.array): The updated z-buffer. 
+        associations (np.array): A 2D array of shape (N, 2) where N is the number of points. The index is 
+            the sequence number of the point and the value is the u, v coordinate of the point in the image.
+            If the point is not projected onto the image, the value is [-1, -1]. 
+
+    """
     # Initialize an array for associations with the same length as points array
     associations = np.full((points.shape[0], 2), -1, dtype=np.int32)  # -1 indicates no valid association
 
@@ -83,6 +100,11 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
         segmentation (np.array): The segmentation image.
         image_height (int): The height of the original image.
         image_width (int): The width of the original image.
+        radius (int): The radius of the circle in segmentation image size.
+        decaying (float): The decaying factor.
+
+    Returns:
+        colors (np.array): A 2D array of shape (N, 3) where N is the number of points. The index is the sequence number of the point and the value is the color.
     """
     # precompute likelihoods
     likelihoods = compute_gaussian_likelihood(radius, decaying)
@@ -205,7 +227,9 @@ class PointcloudProjection(object):
         if not os.path.exists(save_folder_path):
             os.makedirs(save_folder_path)
 
-        for frame_key in frame_keys:
+        total = len(frame_keys)
+        for i, frame_key in enumerate(frame_keys):
+            print('Processing {}/{}: {}'.format(i+1, total, frame_key))
             image, associations = self.project(frame_key)
             associations_path = os.path.join(save_folder_path, frame_key + '.npy')
             np.save(associations_path, associations)
@@ -216,22 +240,20 @@ if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
     
-    segmented = True
-    if not segmented:
+    flag = False  # True: project semantics from one image to the point cloud.
+    if flag:
+        # segment the images
         image_segmentor = ImageSegmentation(sam_params)        
         image_path = '../../data/mission_2/DJI_0247.JPG'
         masks = image_segmentor.predict(image_path)
         image_segmentor.save_npy(masks, '../../data/mission_2/DJI_0247.npy')
-    else:
+
+        # project the point cloud
         pointcloud_projector = PointcloudProjection()
         pointcloud_projector.read_pointcloud('../../data/model.las')
-
         pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
-
         pointcloud_projector.read_segmentation('../../data/mission_2/DJI_0247.npy')
-
         image, associations = pointcloud_projector.project('DJI_0247.JPG')
-
         
         # add color to points
         t1 = time.time()
@@ -239,7 +261,24 @@ if __name__ == "__main__":
         t2 = time.time()
         print('Time for adding colors: ', t2 - t1)
 
-        #write_las(probabilistic_projector.points, colors, "../../data/test.las")
+        write_las(pointcloud_projector.points, colors, "../../data/test.las")
+
+    else:
+        pass
+
+    batch_flag = True  # True: save the associations of all images.
+    if batch_flag:
+        # project the point cloud
+        pointcloud_projector = PointcloudProjection()
+        pointcloud_projector.read_pointcloud('../../data/model.las')
+        pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+
+        # batch project
+        image_folder_path = '../../data/mission_2'
+        save_folder_path = '../../data/mission_2_associations'
+
+        image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+        pointcloud_projector.batch_project(image_list, save_folder_path)
 
 
 

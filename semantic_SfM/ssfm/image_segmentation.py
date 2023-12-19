@@ -85,7 +85,6 @@ class ImageSegmentation(object):
         """
         assert os.path.exists(image_path), 'Image path does not exist.'
         image = cv2.imread(image_path)
-        self.image = image.copy()
 
         if image.shape[0] > maxium_size or image.shape[1] > maxium_size:
             if image.shape[0] > image.shape[1]:
@@ -101,6 +100,7 @@ class ImageSegmentation(object):
         else:
             raise NotImplementedError('Model not implemented.')
         
+        self.image = image.copy()
         return masks
     
     def batch_predict(self, image_paths, save_folder_path, maxium_size=1000):
@@ -115,7 +115,9 @@ class ImageSegmentation(object):
             os.makedirs(save_folder_path)
 
         # predict and save npy
-        for image_path in image_paths:
+        total = len(image_paths)
+        for i, image_path in enumerate(image_paths):
+            print('Processing image {}/{}.'.format(i+1, total))
             masks = self.predict(image_path, maxium_size)
             save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '.npy')
             self.save_npy(masks, save_path)
@@ -124,7 +126,7 @@ class ImageSegmentation(object):
         with open(save_path, 'wb') as f:
             pickle.dump(masks, f)
 
-    def save_overlap(self, masks, save_path):
+    def save_overlap(self, image, masks, save_path):
         """
         Arguments:
             masks (list): A list of masks.
@@ -146,7 +148,7 @@ class ImageSegmentation(object):
         img = img * 255
         img = img.astype(np.uint8)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        img = cv2.addWeighted(img, 0.35, self.image, 0.65, 0)
+        img = cv2.addWeighted(img, 0.35, image, 0.65, 0)
         cv2.imwrite(save_path, img)
 
 
@@ -180,12 +182,56 @@ sam_params['pred_iou_thresh'] = 0.96
 sam_params['stability_score_thresh'] = 0.92
 
 if __name__ == '__main__':
-    image_segmentor = ImageSegmentation(sam_params)        
-    image_path = '../../data/mission_2/DJI_0247.JPG'
-    masks = image_segmentor.predict(image_path)
-    image_segmentor.save_overlap(masks, './test.png')
-    image_segmentor.save_npy(masks, './test.npy')
+    single_test = False
+    if single_test:
+        image_segmentor = ImageSegmentation(sam_params)        
+        image_path = '../../data/mission_2/DJI_0247.JPG'
+        masks = image_segmentor.predict(image_path)
+        image_segmentor.save_overlap(image_segmentor.image, masks, './test.png')
+        image_segmentor.save_npy(masks, './test.npy')
 
+    batch_test = False
+    if batch_test:
+        image_segmentor = ImageSegmentation(sam_params)   
+        image_folder_path = '../../data/mission_2'
+        segmentation_folder_path = '../../data/mission_2_segmentations'
+        image_paths = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+        image_segmentor.batch_predict(image_paths, segmentation_folder_path)
+
+    write_segmentation_test = True
+    if write_segmentation_test:
+        segmentation_path = '../../data/mission_2_segmentations/DJI_0183.npy'
+        save_path = '../../data/DJI_0183_overlap.png'
+        image_path = '../../data/mission_2/DJI_0183.JPG'
+        # read image
+        image = cv2.imread(image_path)
+
+        maxium_size = 1000
+        if image.shape[0] > maxium_size or image.shape[1] > maxium_size:
+            if image.shape[0] > image.shape[1]:
+                image = cv2.resize(image, (int(image.shape[1] * maxium_size / image.shape[0]), maxium_size))
+            else:
+                image = cv2.resize(image, (maxium_size, int(image.shape[0] * maxium_size / image.shape[1])))
+        else:
+            pass
+        
+        # read segmentation
+        mask = np.load(segmentation_path)
+        mask = mask 
+        # add a random color to image for each mask
+        img = np.ones((mask.shape[0], mask.shape[1], 3))
+        for i in range(0, int(mask.max()) + 1):
+            color_mask = np.concatenate([np.random.random(3)])
+            img[mask == i] = color_mask
+
+        # overlap image and img using the last channel of img as alpha channel
+        img = img * 255
+        img = img.astype(np.uint8)
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        img = cv2.addWeighted(img, 0.35, image, 0.65, 0)
+
+        cv2.imwrite(save_path, img)
+        
 
 
             

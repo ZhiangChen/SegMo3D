@@ -23,9 +23,9 @@ pip3 install ssfm
 
 [probabilistic_projection.py](./semantic_SfM/ssfm/probabilistic_projection.py) projects point clouds to images and creates a probablistic semantics.
 
-[object_registration.py](./semantic_SfM/ssfm/instance_registration.py) registers objects (instances and stuffs) in point clouds.
+[object_registration.py](./semantic_SfM/ssfm/object_registration.py) registers objects (instances and stuffs) in point clouds.
 
-[ssfm.py](./semantic_SfM/ssfm/ssfm.py) combines the processes and provides the users an interface to use semantic_SfM. 
+[workflow.py](./semantic_SfM/ssfm/workflow.py) combines the processes and provides the users an interface to use semantic_SfM. 
 
 ## Support interface
 SfM: [WebODM](https://opendronemap.org/webodm/) and [Agisoft](https://www.agisoft.com/).
