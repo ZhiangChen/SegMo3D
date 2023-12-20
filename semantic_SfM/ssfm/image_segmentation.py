@@ -82,6 +82,9 @@ class ImageSegmentation(object):
         Arguments:
             image_path (str): Path to the image.
             maxium_size (int): The maximum size of the image. If the image is larger than this, it will be resized.
+
+        Returns:
+            masks (list): A list of masks.
         """
         assert os.path.exists(image_path), 'Image path does not exist.'
         image = cv2.imread(image_path)
@@ -157,6 +160,13 @@ class ImageSegmentation(object):
         Arguments:
             masks (list): A list of masks.
             save_path (str): The path to save the masks.
+        
+        Returns:
+            None
+
+        The saved npy file is a 2D array with the same size as the image. Each pixel in the array 
+            is the index of the mask that the pixel belongs to. The valid index starts from 0.
+            If the pixel does not belong to any mask, the value is -1.
         """
         if len(masks) == 0:
             raise ValueError('No masks to save.')
@@ -190,15 +200,15 @@ if __name__ == '__main__':
         image_segmentor.save_overlap(image_segmentor.image, masks, './test.png')
         image_segmentor.save_npy(masks, './test.npy')
 
-    batch_test = False
+    batch_test = True
     if batch_test:
         image_segmentor = ImageSegmentation(sam_params)   
         image_folder_path = '../../data/mission_2'
-        segmentation_folder_path = '../../data/mission_2_segmentations'
+        segmentation_folder_path = '../../data/mission_2_segmentations_0'
         image_paths = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
         image_segmentor.batch_predict(image_paths, segmentation_folder_path)
 
-    write_segmentation_test = True
+    write_segmentation_test = False
     if write_segmentation_test:
         segmentation_path = '../../data/mission_2_segmentations/DJI_0183.npy'
         save_path = '../../data/DJI_0183_overlap.png'

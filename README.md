@@ -38,3 +38,5 @@ Point clouds: .las format. Refer to the [docs/projection_tutorial.md](docs/proje
  
 ## Tutorials
 1. Project point clouds to image planes: [docs/projection_tutorial.md](docs/projection_tutorial.md)
+
+2. Data structure and algorithms for object registration: [docs/object_registration.md](docs/object_registration.md)

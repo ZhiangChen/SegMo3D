@@ -20,6 +20,7 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
             the sequence number of the point and the value is the u, v coordinate of the point in the image.
             If the point is not projected onto the image, the value is [-1, -1]. 
 
+    The time complexity is O(N) where N is the number of points.
     """
     # Initialize an array for associations with the same length as points array
     associations = np.full((points.shape[0], 2), -1, dtype=np.int32)  # -1 indicates no valid association
@@ -140,6 +141,28 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
     
     return colors
 
+@jit(nopython=True)
+def inverse_associations(associations):
+    """
+    Arguments:
+        associations (np.array): A 2D array of shape (N, 2) where N is the number of points.
+
+    Returns:
+        inverse_associations (dict): A dictionary where the key is the u, v coordinate of the 
+            point in the image and the value is the index of the point.
+        point_index (list): A list of valid point indices.
+    
+    The time complexity is O(N) where N is the number of points.
+    """
+    inverse_associations = {}
+    point_index = []
+    for i in range(associations.shape[0]):
+        u, v = associations[i]
+        if u != -1 and v != -1:
+            inverse_associations[(u, v)] = i
+            point_index.append(i)
+    return inverse_associations, point_index
+
 
 class PointcloudProjection(object):
     """
@@ -231,7 +254,7 @@ class PointcloudProjection(object):
         for i, frame_key in enumerate(frame_keys):
             print('Processing {}/{}: {}'.format(i+1, total, frame_key))
             image, associations = self.project(frame_key)
-            associations_path = os.path.join(save_folder_path, frame_key + '.npy')
+            associations_path = os.path.join(save_folder_path, frame_key[:-4] + '.npy')
             np.save(associations_path, associations)
             
 
@@ -266,7 +289,7 @@ if __name__ == "__main__":
     else:
         pass
 
-    batch_flag = True  # True: save the associations of all images.
+    batch_flag = False  # True: save the associations of all images.
     if batch_flag:
         # project the point cloud
         pointcloud_projector = PointcloudProjection()
@@ -279,6 +302,18 @@ if __name__ == "__main__":
 
         image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
         pointcloud_projector.batch_project(image_list, save_folder_path)
+
+    else:
+        pass
+
+    # test inverse_associations
+    associations = np.load('../../data/mission_2_associations/DJI_0247.npy')
+    t1 = time.time()
+    inverse_associations = inverse_associations(associations)
+    t2 = time.time()
+    print('Time for inverse_associations: ', t2 - t1)
+    #print(inverse_associations)
+
 
 
 
