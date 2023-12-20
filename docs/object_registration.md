@@ -1,4 +1,4 @@
-# Tutorial: Data Structure and Algorithm for Object Registration
+# Tutorial: Data Structures and Algorithms for Object Registration
 
 Zhiang Chen, Dec 19, 2023
 
@@ -35,13 +35,26 @@ Query:
 object index -> pixel coordinates of the object: python filtering   
 
 ### 4. Pointcloud segmentation
-The pointcloud segmentation is a dictionary where the key is the point index and the value is a list of instance probabilities. An instance probability is a dictionary where the key is instance index and the value is its corresponding normalized probability. 
+The pointcloud segmentation is a dictionary where the key is the point index and the value is a list of instance probabilities. An instance probability is a dictionary where the key is instance index and the value is its corresponding normalized probability. The pointcloud segmentation is the final result we expect from the object registration algorithms. 
+
+
+### 5. Object manager
+*Probabilistic projection* is employed to (1) compensate for camera projection distortion and (2) segmentation errors. Each pixel in image segmentation has a list of probabilistic object ids from the pixel's neighbors. The probability of a neighbor is calculated from a Gaussian decaying function. 
+
+For object registration, if immediately registering an new object by neigher merging or creating a new object, we also need to update the probabilistic object ids for the points from the new object. However, if there are any object ids that have not been registered, it may raise problems of registering them with new object ids, because later on the object ids may be mergered to other registered objects. Therefore, to address this issue, we introduce an idea of object manager. 
+
+The object manager associates the object ids in the image to be registered and the registered object ids in the pointcloud segmentation. The object manager is a dictionary where the key is object ids in the image and the value is the object ids in the pointcloud segmentation. If an object is not merged to any registered ones, the corresponding value will be assigned as None. 
+
+During registering each object in a new image, only the object manager will be updated. After all objects are registered, we will use the object manager to update the pointcloud segmentation. 
+
 
 ## Algorithms
 
 ### 1. Object registration
 ```
-association_p2i = initlize()  # initilize point-image association
+pc_segmentation = initialize_pc_segmentation()  # initialize pointcloud segmentation
+association_p2i = initialize_association_p2i()  # initialize point-image association
+object_manager = initialize_object_manager()  # initialize object manager
 
 M_images = len(segmentations)  # M is the number of images
 for j in range(M_images):
@@ -49,12 +62,11 @@ for j in range(M_images):
     N_objects = len(segmented_objects_image1)
     association1 = associations[j]  # point-pixel association
     inv_association1 = inv(association1)  # pixel-point association
-    update(association_p2i, j)
-
+    
     for i in range(N_objects):
         pixel_object1_image1 = segmented_objects[i]  # pixels of object 1 in image 1
         points_object1_image1 = inv_association1[pixel_object1_image1] # points of object 1 from image 1
-        key_images = association_p2i[points_object1_image1]
+        key_images = association_p2i.get_key_images(points_object1_image1)
         for id_image2 in key_images:
             association2 = associations[id_image2]
             inv_association2 = inv(association2)
@@ -62,7 +74,7 @@ for j in range(M_images):
             points_object1_image2 = inv_association2[pixel_object1_image2] # Point(T_2 O_1)
 
             segmented_objects_image2 = segmentations[id_image2]
-            pixel_object2_image2 = object2_search(segmented_objects_images2, pixel_object1_image2)
+            pixel_object2_image2 = object2_search(segmented_objects_image2, pixel_object1_image2)
             points_object2_image2 = inv_association2[pixel_object2_image2]  # points of object 2 from image 2
             pixel_object2_image1 = association1[points_object2_image2]
             points_object2_image1 = inv_assocation1[pixel_object2_image1] # Point(T_1 O_2)
@@ -70,23 +82,58 @@ for j in range(M_images):
             IoU = calculate_IoU(points_object1_image2, points_object2_image1)
 
             if IoU > threshold:
-                update_pointcloud_segmentation(points_object1_image1, segmented_objects_image1, points_object2_image2, merge=True)
+                update_instance_manager(instance_manager, points_object1_image1, segmented_objects_image1, points_object2_image2, merge=True)
             else:
-                update_pointcloud_segmentation(points_object1_image1, segmented_objects_image1, points_object2_image2=None, merge=False)
+                update_instance_manager(instance_manager, points_object1_image1, segmented_objects_image1, points_object2_image2=None, merge=False)
+
+    update(association_p2i, j)
+    update_pointcloud_segmentation(pc_segmentation, instance_manager)
 
 ```
 
 **Note**:  
 All the indexing operations [.] have constant time complexity.   
-inv(.) has linear time complexity.  
+association_p2i.get_key_images(.) has linear time complexity w.r.t. the number of valid points.  
+inv(.) has linear time complexity w.r.t. the number of points.  
 object2_search(.) has linearithmic time comlexity.  
 calculate_IoU(.) has  
 update_pointcloud_segmentation(.) has  
 
 ### 2. Search $O_2$
+```
+object_ids_object1_image2 = segmented_objects_image2[pixel_object1_image2]  # O(N)
+object_id = sort_count(object_ids_object1_image2)  # O(N log N)
+pixel_object2_image2 = segmented_objects_images.get_instance(object_id)  # O(N)
+```
 
 ### 3. Calculate IoU
+```
+points1 = filter_valid_points(points_object1_image2)
+points2 = filter_valid_points(points_object2_image1)
+points1_hash = hash(points1)
+points2_hash = hash(points2)
+points_hash = concatenate(points1_hash, points2_hash)
+intersection = isin(points1_hash, points2_hash)
+union = unique(points_hash)
+IoU = len(intersection) / len(union)
+```
 
-### 4. Update pointcloud segmentation
+The Numpy functions $isin()$ and $unique()$ have efficient implementations by utilizing merge sort algorithms, both with time complexity of $O(P\cdot log_2(P))$.
 
+### 4. Update object manager
+object manager
+
+```
+
+update_pointcloud_segmentation(pc_segmentation, points_object1_image1, segmented_objects_image1, points_object2_image2, merge=True)
+
+
+if merge:
+    
+
+else:
+
+
+
+```
 
