@@ -35,7 +35,7 @@ Query:
 object index -> pixel coordinates of the object: python filtering   
 
 ### 4. Pointcloud segmentation
-The pointcloud segmentation is a dictionary where the key is the point index and the value is a list of instance probabilities. An instance probability is a dictionary where the key is instance index and the value is its corresponding normalized probability. The pointcloud segmentation is the final result we expect from the object registration algorithms. 
+The pointcloud segmentation is a dictionary where the key is the point index and the value is a list of object probabilities. An object probability is a dictionary where the key is object index and the value is its corresponding normalized probability. The pointcloud segmentation is the final result we expect from the object registration algorithms. 
 
 
 ### 5. Object manager
@@ -43,7 +43,7 @@ The pointcloud segmentation is a dictionary where the key is the point index and
 
 For object registration, if immediately registering an new object by neigher merging or creating a new object, we also need to update the probabilistic object ids for the points from the new object. However, if there are any object ids that have not been registered, it may raise problems of registering them with new object ids, because later on the object ids may be mergered to other registered objects. Therefore, to address this issue, we introduce an idea of object manager. 
 
-The object manager associates the object ids in the image to be registered and the registered object ids in the pointcloud segmentation. The object manager is a dictionary where the key is object ids in the image and the value is the object ids in the pointcloud segmentation. If an object is not merged to any registered ones, the corresponding value will be assigned as None. 
+The object manager associates the object ids in the image to be registered and the registered object ids in the pointcloud segmentation. The object manager is a dictionary where the key is object ids in the image and the value is a list of the object ids in the pointcloud segmentation. If an object is not merged to any registered ones, the corresponding value will be an empty list. The reason of having a list for the value is due to the twin problem in object registration. The twin problem in 2D instance registration is explained in https://github.com/ZhiangChen/rsisa.  
 
 During registering each object in a new image, only the object manager will be updated. After all objects are registered, we will use the object manager to update the pointcloud segmentation. 
 
@@ -82,28 +82,29 @@ for j in range(M_images):
             IoU = calculate_IoU(points_object1_image2, points_object2_image1)
 
             if IoU > threshold:
-                update_instance_manager(instance_manager, points_object1_image1, segmented_objects_image1, points_object2_image2, merge=True)
+                update_object_manager(object_manager, points_object1_image1, segmented_objects_image1, points_object2_image2, merge=True)
             else:
-                update_instance_manager(instance_manager, points_object1_image1, segmented_objects_image1, points_object2_image2=None, merge=False)
+                update_object_manager(object_manager, points_object1_image1, segmented_objects_image1, points_object2_image2=None, merge=False)
 
-    update(association_p2i, j)
-    update_pointcloud_segmentation(pc_segmentation, instance_manager)
-
+    update_association_p2i(association_p2i, j)
+    purge_object_manager(object_manager)
+    update_pointcloud_segmentation(pc_segmentation, object_manager, association1)
 ```
 
 **Note**:  
 All the indexing operations [.] have constant time complexity.   
 association_p2i.get_key_images(.) has linear time complexity w.r.t. the number of valid points.  
 inv(.) has linear time complexity w.r.t. the number of points.  
-object2_search(.) has linearithmic time comlexity.  
-calculate_IoU(.) has  
-update_pointcloud_segmentation(.) has  
+object2_search(.) has linearithmic time comlexity w.r.t. the len(pixel_object1_image2).  
+calculate_IoU(.) has linearithmic time comlexity w.r.t. len(points_object1_image2) + len(points_object2_image1).  
+update_object_manager has linearithmic time complexity w.r.t. len(points_object2_image2).   
+update_pointcloud_segmentation(.) has time complexity linear to the number of points. 
 
 ### 2. Search $O_2$
 ```
 object_ids_object1_image2 = segmented_objects_image2[pixel_object1_image2]  # O(N)
 object_id = sort_count(object_ids_object1_image2)  # O(N log N)
-pixel_object2_image2 = segmented_objects_images.get_instance(object_id)  # O(N)
+pixel_object2_image2 = segmented_objects_images.get_object(object_id)  # O(N)
 ```
 
 ### 3. Calculate IoU
@@ -121,19 +122,32 @@ IoU = len(intersection) / len(union)
 The Numpy functions $isin()$ and $unique()$ have efficient implementations by utilizing merge sort algorithms, both with time complexity of $O(P\cdot log_2(P))$.
 
 ### 4. Update object manager
-object manager
 
 ```
-
-update_pointcloud_segmentation(pc_segmentation, points_object1_image1, segmented_objects_image1, points_object2_image2, merge=True)
-
-
 if merge:
-    
-
+    object_id = segmented_objects_image1[pixel_object1_image1]
+    registered_object_id = points_object2_image2.get_object_id()
+    object_manager[object_id].append(registered_object_id)
 else:
-
-
-
+    pass
 ```
 
+The `get_object_id(.)` returns the object id with the largest summed likelihood. 
+
+### 5. Purge object manager
+When an object id in a new image has multiple unique object ids, which indicates the twin registration problem, we need to purge the repeated, registered object ids.  
+
+### 5. Update pointcloud segmentation
+```
+for point_id, pixel in enumerate(association1):
+    if pixel is valid:  # pixel is not (-1, -1)
+        probabilistic_object_ids = calculate_probabilistic_object_ids(pixel)
+        updated_probabilistic_object_ids = replace_object_id(probabilistic_object_ids, object_manager)
+        if pc_segmentation[point_id] is Empty:
+            pc_segmentation[point_id] = updated_probabilistic_object_ids
+        else:
+            registered_probabilistic_object_ids = pc_segmentation[point_id]
+            pc_segmentation[point_id] = normalize_probabilistic_object_ids(registered_probabilistic_object_ids, updated_probabilistic_object_ids)
+    else:
+        pass
+```

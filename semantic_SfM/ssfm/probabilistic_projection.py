@@ -18,7 +18,8 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
         z_buffer (np.array): The updated z-buffer. 
         associations (np.array): A 2D array of shape (N, 2) where N is the number of points. The index is 
             the sequence number of the point and the value is the u, v coordinate of the point in the image.
-            If the point is not projected onto the image, the value is [-1, -1]. 
+            If the point is not projected onto the image, the value is [-1, -1]. u is the axis of width and 
+            v is the axis of height.
 
     The time complexity is O(N) where N is the number of points.
     """
@@ -39,12 +40,11 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
     return image, z_buffer, associations
 
 @jit(nopython=True)
-def inquire_semantics(u, v, resize_factor, padded_segmentation, normalized_likelihoods, likelihoods, radius=3):
+def inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=3):
     """
     Arguments:
         u (int): The u coordinate of the pixel in the original image.
         v (int): The v coordinate of the pixel in the original image.
-        resize_factor (float): The factor to resize the segmentation image.
         padded_segmentation (np.array): The segmentation image padded by the size of radius with -1.
         normalized_likelihoods (np.array): A 1D array of shape (N,) where N is the number of semantic classes. The index is the semantic.
         likelihoods (np.array): A 1D array of shape (N,) where N is the number of pixels with center of (u, v) and given radius. 
@@ -55,7 +55,6 @@ def inquire_semantics(u, v, resize_factor, padded_segmentation, normalized_likel
         normalized_likelihoods (np.array): A 1D array of shape (N,) where N is the number of semantic classes. The index is the semantic 
             id and the value is the normalized likelihood. 
     """
-    u, v = int(u * resize_factor), int(v * resize_factor)
 
     # Extract semantic ids and corresponding likelihoods
     for i in range(-radius, radius + 1):
@@ -113,19 +112,10 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
     # Vectorized random color generation
     N = int(np.ceil(segmentation.max()))
     random_colors = np.random.randint(0, 255, (N, 3)).astype(np.int64)
-
-    # resize u,v to the size of segmentation image
-    resize_segmentation = max(segmentation.shape[0], segmentation.shape[1])
-    if image_height > resize_segmentation or image_width > resize_segmentation:
-        resize_factor = resize_segmentation / max(image_height, image_width)
-        resize_height, resize_width = int(image_height * resize_factor), int(image_width * resize_factor)
-    else:
-        resize_height, resize_width = image_height, image_width
-        resize_factor = 1
     
     # pad segmentation image by the size of radius with -1
-    padded_segmentation = -np.ones((2*radius+resize_height+2, 2*radius+resize_width+2))
-    padded_segmentation[radius+1:radius+resize_height+1, radius+1:radius+resize_width+1] = segmentation
+    padded_segmentation = -np.ones((2*radius+image_height+2, 2*radius+image_width+2))
+    padded_segmentation[radius+1:radius+image_height+1, radius+1:radius+image_width+1] = segmentation
 
     # Allocate normalized_likelihoods outside the loop
     normalized_likelihoods = np.zeros(int(segmentation.max() + 1), dtype=np.float64)
@@ -133,7 +123,7 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
     for i in range(associations.shape[0]):
         u, v = associations[i]
         if u != -1 and v != -1:
-            normalized_likelihoods = inquire_semantics(u, v, resize_factor, padded_segmentation, normalized_likelihoods, likelihoods, radius=2)
+            normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=2)
 
             if normalized_likelihoods.max() > 0:
                 semantic_id = np.argmax(normalized_likelihoods)
@@ -263,7 +253,7 @@ if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
     
-    flag = False  # True: project semantics from one image to the point cloud.
+    flag = True  # True: project semantics from one image to the point cloud.
     if flag:
         # segment the images
         image_segmentor = ImageSegmentation(sam_params)        
@@ -277,7 +267,7 @@ if __name__ == "__main__":
         pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
         pointcloud_projector.read_segmentation('../../data/mission_2/DJI_0247.npy')
         image, associations = pointcloud_projector.project('DJI_0247.JPG')
-        
+
         # add color to points
         t1 = time.time()
         colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width)
@@ -309,10 +299,10 @@ if __name__ == "__main__":
     # test inverse_associations
     associations = np.load('../../data/mission_2_associations/DJI_0247.npy')
     t1 = time.time()
-    inverse_associations = inverse_associations(associations)
+    inv_associations, point_index = inverse_associations(associations)
     t2 = time.time()
     print('Time for inverse_associations: ', t2 - t1)
-    #print(inverse_associations)
+
 
 
 

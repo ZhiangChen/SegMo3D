@@ -89,6 +89,8 @@ class ImageSegmentation(object):
         assert os.path.exists(image_path), 'Image path does not exist.'
         image = cv2.imread(image_path)
 
+        self.image_size = image.shape
+
         if image.shape[0] > maxium_size or image.shape[1] > maxium_size:
             if image.shape[0] > image.shape[1]:
                 image = cv2.resize(image, (int(image.shape[1] * maxium_size / image.shape[0]), maxium_size))
@@ -124,16 +126,14 @@ class ImageSegmentation(object):
             masks = self.predict(image_path, maxium_size)
             save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '.npy')
             self.save_npy(masks, save_path)
-    
-    def save_pickle(self, masks, save_path):
-        with open(save_path, 'wb') as f:
-            pickle.dump(masks, f)
 
     def save_overlap(self, image, masks, save_path):
         """
         Arguments:
             masks (list): A list of masks.
             save_path (str): The path to save the masks.
+
+        Note that the saved image is a 3-channel image with the maximum size of maxium_size. The images and masks are resized to the maximum size.
         """
         if len(masks) == 0:
             raise ValueError('No masks to save.')
@@ -164,7 +164,7 @@ class ImageSegmentation(object):
         Returns:
             None
 
-        The saved npy file is a 2D array with the same size as the image. Each pixel in the array 
+        The saved npy file is a 2D array with the same size as the orignal image. Each pixel in the array 
             is the index of the mask that the pixel belongs to. The valid index starts from 0.
             If the pixel does not belong to any mask, the value is -1.
         """
@@ -178,6 +178,9 @@ class ImageSegmentation(object):
             for id, ann in enumerate(sorted_anns):
                 m = ann['segmentation']
                 img[m] = id
+
+            # resize img to the original size (self.image_size) using nearest neighbor interpolation
+            img = cv2.resize(img, (self.image_size[1], self.image_size[0]), interpolation=cv2.INTER_NEAREST)
 
             np.save(save_path, img)
 
