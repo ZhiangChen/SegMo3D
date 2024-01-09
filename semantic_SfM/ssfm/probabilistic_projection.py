@@ -1,6 +1,7 @@
 from ssfm.files import *
 import os
 from numba import jit
+import concurrent.futures
 
 @jit(nopython=True)
 def update_image_and_associations(image, z_buffer, points, colors, height, width):
@@ -16,15 +17,10 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
     Returns:
         image (np.array): The updated image. 
         z_buffer (np.array): The updated z-buffer. 
-        associations (np.array): A 2D array of shape (N, 2) where N is the number of points. The index is 
-            the sequence number of the point and the value is the u, v coordinate of the point in the image.
-            If the point is not projected onto the image, the value is [-1, -1]. u is the axis of width and 
-            v is the axis of height.
-
-    The time complexity is O(N) where N is the number of points.
+        associations (np.array): A 2D array of shape (N, 3) where N is the number of valid points that are projected onto the image. For each point, the first two elements are the u, v coordinate of the point in the image and the third element is the index of the point in the original points array. u is the axis of width and v is the axis of height.
     """
-    # Initialize an array for associations with the same length as points array
-    associations = np.full((points.shape[0], 2), -1, dtype=np.int32)  # -1 indicates no valid association
+    associations_pixel = []
+    associations_point = []
 
     for i in range(points.shape[0]):
         x, y, z = points[i]
@@ -33,11 +29,21 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
 
         if 0 <= px < width and 0 <= py < height:
             if z < z_buffer[py, px]:
+                if z_buffer[py, px] == np.inf:
+                    associations_pixel.append([px, py])
+                    associations_point.append(i)
+                else:
+                    index = associations_pixel.index([px, py])
+                    associations_point[index] = i
+
                 z_buffer[py, px] = z
-                image[py, px] = color
-                associations[i] = [px, py]
+                image[py, px] = color                
+
+    associations = np.hstack((np.array(associations_pixel), np.array(associations_point).reshape(-1, 1)))
 
     return image, z_buffer, associations
+
+
 
 @jit(nopython=True)
 def inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=3):
@@ -95,7 +101,9 @@ def compute_gaussian_likelihood(radius, decaying):
 def add_color_to_points(associations, colors, segmentation, image_height, image_width, radius=2, decaying=2):
     """
     Arguments:
-        associations (np.array): A 2D array of shape (N, 2) where N is the number of points.
+        associations (np.array): A 2D array of shape (N, 3) where N is the number of valid points. For each point, 
+            the first two elements are the u, v coordinate of the point in the image and the third element is the 
+            index of the point in the original points array. u is the axis of width and v is the axis of height.
         colors (np.array): A 2D array of shape (N, 3) where N is the number of points.
         segmentation (np.array): The segmentation image.
         image_height (int): The height of the original image.
@@ -121,37 +129,15 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
     normalized_likelihoods = np.zeros(int(segmentation.max() + 1), dtype=np.float64)
 
     for i in range(associations.shape[0]):
-        u, v = associations[i]
-        if u != -1 and v != -1:
-            normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=2)
+        u, v, point_index = associations[i]
+        normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=2)
 
-            if normalized_likelihoods.max() > 0:
-                semantic_id = np.argmax(normalized_likelihoods)
-                colors[i] = random_colors[int(semantic_id) - 1]
+        if normalized_likelihoods.max() > 0:
+            semantic_id = np.argmax(normalized_likelihoods)
+            colors[point_index] = random_colors[int(semantic_id) - 1]
     
     return colors
 
-@jit(nopython=True)
-def inverse_associations(associations):
-    """
-    Arguments:
-        associations (np.array): A 2D array of shape (N, 2) where N is the number of points.
-
-    Returns:
-        inverse_associations (dict): A dictionary where the key is the u, v coordinate of the 
-            point in the image and the value is the index of the point.
-        point_index (list): A list of valid point indices.
-    
-    The time complexity is O(N) where N is the number of points.
-    """
-    inverse_associations = {}
-    point_index = []
-    for i in range(associations.shape[0]):
-        u, v = associations[i]
-        if u != -1 and v != -1:
-            inverse_associations[(u, v)] = i
-            point_index.append(i)
-    return inverse_associations, point_index
 
 
 class PointcloudProjection(object):
@@ -227,7 +213,7 @@ class PointcloudProjection(object):
         px, py = x.astype(int), y.astype(int)
 
         # Update image and get associations
-        image, z_buffer, associations = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
+        image, z_buffer, associations  = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
 
         return image, associations
     
@@ -243,17 +229,59 @@ class PointcloudProjection(object):
         total = len(frame_keys)
         for i, frame_key in enumerate(frame_keys):
             print('Processing {}/{}: {}'.format(i+1, total, frame_key))
+            t1 = time.time()
             image, associations = self.project(frame_key)
+            t2 = time.time()
+            print('Time for projection: ', t2 - t1)
+
             associations_path = os.path.join(save_folder_path, frame_key[:-4] + '.npy')
+            # save associations as npy
             np.save(associations_path, associations)
-            
+
+    def process_frame(self, frame_key, save_folder_path):
+        print('Processing: {}'.format(frame_key))
+        t1 = time.time()
+        image, associations = self.project(frame_key)
+        t2 = time.time()
+        print('Time for projection: ', t2 - t1)
+
+        associations_path = os.path.join(save_folder_path, frame_key[:-4] + '.npy')
+        # save associations as npy
+        np.save(associations_path, associations)
+
+    def parallel_batch_project(self, frame_keys, save_folder_path, num_workers=8):
+        """
+        Arguments:
+            frame_keys (list): A list of frame keys.
+            save_folder_path (str): The path to save the images.
+        """
+        if not os.path.exists(save_folder_path):
+            os.makedirs(save_folder_path)
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_workers)
+        futures = [executor.submit(self.process_frame, frame_key, save_folder_path) for frame_key in frame_keys]
+
+        try:
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                # Process results or handle exceptions if any
+                print(f'Task {i+1}/{len(frame_keys)} completed')
+
+        except KeyboardInterrupt:
+            print("Interrupted by user, cancelling tasks...")
+            for future in futures:
+                future.cancel()
+        except Exception as e:
+            print(f"An error occurred: {e}")
+        finally:
+            executor.shutdown(wait=False)
+            print("Executor shut down.")
 
 
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
     
-    flag = True  # True: project semantics from one image to the point cloud.
+    flag = False  # True: project semantics from one image to the point cloud.
     if flag:
         # segment the images
         image_segmentor = ImageSegmentation(sam_params)        
@@ -296,12 +324,22 @@ if __name__ == "__main__":
     else:
         pass
 
-    # test inverse_associations
-    associations = np.load('../../data/mission_2_associations/DJI_0247.npy')
-    t1 = time.time()
-    inv_associations, point_index = inverse_associations(associations)
-    t2 = time.time()
-    print('Time for inverse_associations: ', t2 - t1)
+    Parallel_batch_flag = True
+    if Parallel_batch_flag:
+        # project the point cloud
+        pointcloud_projector = PointcloudProjection()
+        pointcloud_projector.read_pointcloud('../../data/model.las')
+        pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+
+        # batch project
+        image_folder_path = '../../data/mission_2'
+        save_folder_path = '../../data/mission_2_associations_parallel'
+
+        image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+        pointcloud_projector.parallel_batch_project(image_list, save_folder_path)
+
+    else:
+        pass
 
 
 
