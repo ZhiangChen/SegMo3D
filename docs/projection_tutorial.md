@@ -2,7 +2,7 @@
 
 Zhiang Chen, Nov 30, 2023
 
-Using a collection of images, Structure from Motion (SfM) generates a point cloud, mesh model, camera poses, and camera intrinsic parameters. This tutorial outlines the steps to project the point cloud back onto an image plane and includes a corresponding [Jupyter Notebook](../ssfm/ssfm/projection.ipynb) to aid in understanding the process.
+Using a collection of images, Structure from Motion (SfM) generates a point cloud, mesh model, camera poses, and camera intrinsic parameters. This tutorial outlines the steps to project the point cloud back onto an image plane and includes a corresponding [Jupyter Notebook](../semantic_SfM/ssfm/projection.ipynb) to aid in understanding the process.
 
 
 ## Point cloud acquisition
@@ -46,7 +46,7 @@ In Agisoft, camera extrinsic matrix can be exported to a .xml file. It is recomm
 
 In WebODM, camera extrinsic matrix can be exported to a .geojson file. 
 
-[ssfm/files.py](../ssfm/ssfm/files.py) includes functions to read camera extrinsic matrix. 
+[ssfm/files.py](../semantic_SfM/ssfm/files.py) includes functions to read camera extrinsic matrix. 
 
 Jointly debugging extrinsic projection and intrinsic project is difficult. Therefore, it is recommended to figure out extrinsic matrix and intrinsic matrix in sequence. 
 
@@ -83,5 +83,5 @@ Debugging intrinsic matrix can be cumbersome. Here are several important steps t
 
 2. Exam the center and boundary of the cropped point cloud.
 
-3. Exam the projected image. Resize the image if the orignal size is too large. The projected image may contain many black pixels because the original point cloud is sparser than image pixels. Nearest interpolation can be used to fill the black pixels. Details can be found in the tutorial [Jupyter Notebook](../ssfm/ssfm/projection.ipynb). 
+3. Exam the projected image. Resize the image if the orignal size is too large. The projected image may contain many black pixels because the original point cloud is sparser than image pixels. Nearest interpolation can be used to fill the black pixels. Details can be found in the tutorial [Jupyter Notebook](../semantic_SfM/ssfm/projection.ipynb). 
 

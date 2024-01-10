@@ -57,7 +57,19 @@ class ObjectRegistration(object):
         self.associations_point2pixel = []
         self.masks = []
     
-    def update_key_images(self, point_object1_image1, image_index):
+    def update_association_p2i(self, point_object1_image1, image_index):
+        """
+        Update association_p2i where the key is the point index and the value is a list of images that include the projection of the point.
+
+        Parameters
+        ----------
+        point_object1_image1 : list of point indices
+        image_index : int
+
+        Returns
+        -------
+        None
+        """
         for point in point_object1_image1:
             if point not in self.association_p2i.keys():
                 self.association_p2i[point] = [image_index]
@@ -93,60 +105,68 @@ class ObjectRegistration(object):
 
         return pixel_object2_image2
 
-    def calculate_3D_IoU(self):
-        pass
-
-    def update_object_manager(self, pixel_object1_image1, segmented_objects_image1, point_object2_image2, merge):
+    def calculate_3D_IoU(self, point_object1_image2, point_object2_image1):
         """
-        Update object_manager. If merge is False, the object_manager is not updated. If merge is True and point_object2_image2 
-        is None, the object_id from pixel_object1_image1 is updated with None. If merge is True and point_object2_image2 is not 
-        None, the object_manager is updated with the object_id from pixel_object1_image1 with the maximum probability.
+        Calculate 3D IoU between object1 in image2 and object2 in image1.
+
+        Parameters
+        ----------
+        point_object1_image2 : list of point indices
+        point_object2_image1 : list of point indices
+
+        Returns
+        -------
+        iou : float
+        """
+        intersection = np.count_nonzero(np.in1d(point_object1_image2, point_object2_image1, assume_unique=True))
+        union = len(point_object1_image2) + len(point_object2_image1) - intersection
+        iou = intersection / union
+        return iou
+
+    def update_object_manager(self, pixel_object1_image1, segmented_objects_image1, point_object2_image2):
+        """
+        Update object_manager where the key is the object id from segmented_objects_image1 with pixel_object1_image1 
+        and the value is a list of registered object ids that are associated with the object id. If point_object2_image2 
+        is None, the value is None. Otherwise, the value is the object id with the maximum probability.
         
         Parameters
         ----------
         pixel_object1_image1 : 2D array of shape (N_pixels, 2), where each row is a pixel coordinate (u, v)
         segmented_objects_image1 : 2D array of shape (width, height), where each element is an object id
         point_object2_image2 : list of point indices
-        merge : boolean
         
         Returns
         -------
         None
         """
-        
-        if merge:
-            # get object id from pixel_object1_image1 and segmented_objects_image1
-            object_id = int(segmented_objects_image1[tuple(pixel_object1_image1[0])])
+        # get object id from pixel_object1_image1 and segmented_objects_image1
+        object_id = int(segmented_objects_image1[tuple(pixel_object1_image1[0])])
 
-            if point_object2_image2 == None:  # if point_object2_image2 is None, update the object_id with None
-                registered_objects_id = None
-            else:  # if point_object2_image2 is not None, get the object id with the maximum probability
-                point_object_prob_sum = dict()
-                for point in point_object2_image2:
-                    point_object_probs = self.pc_segmentation[point]  # dictionary of object probabilities for a point, where the key is the object id and the value is the normalized object probability
-                    for object_id, prob in point_object_probs.items():
-                        if object_id not in point_object_prob_sum.keys():
-                            point_object_prob_sum[object_id] = prob
-                        else:
-                            point_object_prob_sum[object_id] += prob
-                
-                registered_objects_id = max(point_object_prob_sum, key=point_object_prob_sum.get)
+        if point_object2_image2 == None:  # if point_object2_image2 is None, update the object_id with None
+            registered_objects_id = None
+        else:  # if point_object2_image2 is not None, get the object id with the maximum probability
+            point_object_prob_sum = dict()
+            for point in point_object2_image2:
+                point_object_probs = self.pc_segmentation[point]  # dictionary of object probabilities for a point, where the key is the object id and the value is the normalized object probability
+                for object_id, prob in point_object_probs.items():
+                    if object_id not in point_object_prob_sum.keys():
+                        point_object_prob_sum[object_id] = prob
+                    else:
+                        point_object_prob_sum[object_id] += prob
             
-            # if there is no object id in object_manager, add the object id and registered_objects_id to object_manager
-            if object_id not in self.object_manager.keys():
-                self.object_manager[object_id] = [registered_objects_id]
-            else:
-                self.object_manager[object_id].append(registered_objects_id)
+            registered_objects_id = max(point_object_prob_sum, key=point_object_prob_sum.get)
+        
+        # if there is no object id in object_manager, add the object id and registered_objects_id to object_manager
+        if object_id not in self.object_manager.keys():
+            self.object_manager[object_id] = [registered_objects_id]
         else:
-            pass
+            self.object_manager[object_id].append(registered_objects_id)
+
 
     def purge_object_manager(self):
         pass
 
-    def update_association_p2i(self):
-        pass
-
-    def update_pc_segmentation(self, association1):
+    def update_pc_segmentation(self):
         pass
 
     def get_object_id_from_points(self, point_object2_image2):
@@ -155,7 +175,7 @@ class ObjectRegistration(object):
         else:
             pass
 
-    def object_registration(self):
+    def object_registration(self, iou_threshold=0.75):
         M_images = len(self.segmentation_association_pairs)
 
         # iterate over all images
@@ -214,6 +234,7 @@ class ObjectRegistration(object):
 
                 # get point indices of pixel_object1_image1 using association1. However, not all pixels in pixel_object1_image1 have a corresponding point index.
                 point_object1_image1 = [associations1_pixel2point[tuple((p[0], p[1]))] for p in pixel_object1_image1 if mask1[p[0], p[1]]]
+
                 t6 = time.time()
                 print('Time to get point indices of pixel_object1_image1: {}'.format(t6 - t5))
 
@@ -226,13 +247,13 @@ class ObjectRegistration(object):
 
                 t7 = time.time()
                 # update association_p2i
-                self.update_key_images(point_object1_image1, i)
+                self.update_association_p2i(point_object1_image1, i)
                 t8 = time.time()
                 print('Time to update association_p2i: {}'.format(t8 - t7))
 
                 if len(key_images) == 0:
                     # update object_manager
-                    self.update_object_manager(pixel_object1_image1, segmented_objects_image1, None, True)
+                    self.update_object_manager(pixel_object1_image1, segmented_objects_image1, None)
                     t9 = time.time()
                     print('Time to update object_manager: {}'.format(t9 - t8))
                 else:
@@ -256,7 +277,46 @@ class ObjectRegistration(object):
                         t2 = time.time()
                         print('Time to search object2: {}'.format(t2 - t1))
 
+                        t1 = time.time()
+                        point_object2_image2 = [associations2_pixel2point[tuple((p[0], p[1]))] for p in pixel_object2_image2 if mask2[p[0], p[1]]]
+                        t2 = time.time()
+                        print('Time to get point_object2_image2: {}'.format(t2 - t1))
+
+                        pixel_object2_image1 = [associations1_point2pixel[point] for point in point_object2_image2 if point in associations1_point2pixel.keys()]
+                        t3 = time.time()
+                        print('Time to get pixel_object2_image1: {}'.format(t3 - t2))
+
+                        point_object2_image1 = [associations1_pixel2point[tuple((p[0], p[1]))] for p in pixel_object2_image1 if mask1[p[0], p[1]]]
+                        t4 = time.time()
+                        print('Time to get point_object2_image1: {}'.format(t4 - t3))
+
+                        iou = self.calculate_3D_IoU(point_object1_image2, point_object2_image1)
+                        print('iou: {}'.format(iou))
+                        t5 = time.time()
+                        print('Time to calculate 3D IoU: {}'.format(t5 - t4))
+
+                        if iou >= iou_threshold:
+                            # update object_manager
+                            self.update_object_manager(pixel_object1_image1, segmented_objects_image1, point_object2_image2)
+                            t5 = time.time()
+                            print('Time to update object_manager: {}'.format(t5 - t4))
+                        else:
+                            # update object_manager
+                            self.update_object_manager(pixel_object1_image1, segmented_objects_image1, None)
+                            t5 = time.time()
+                            print('Time to update object_manager: {}'.format(t5 - t4))
+
                 print('---------------------------------------------------')
+
+            # print object_manager
+            print('object_manager: {}'.format(self.object_manager))
+            # purge object_manager
+            self.purge_object_manager()
+            # update self.pc_segmentation
+            self.update_pc_segmentation()
+
+
+            print('===================================================')
 
 
                 
