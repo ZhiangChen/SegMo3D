@@ -128,14 +128,18 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
     # Allocate normalized_likelihoods outside the loop
     normalized_likelihoods = np.zeros(int(segmentation.max() + 1), dtype=np.float64)
 
+    # Count the number of points for each semantic class
+    point_count = np.zeros(int(segmentation.max() + 1), dtype=np.int64)
     for i in range(associations.shape[0]):
         u, v, point_index = associations[i]
-        normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=2)
+        normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=radius)
 
         if normalized_likelihoods.max() > 0:
             semantic_id = np.argmax(normalized_likelihoods)
             colors[point_index] = random_colors[int(semantic_id) - 1]
+            point_count[int(semantic_id)] += 1
     
+    print('Point count: ', point_count)
     return colors
 
 
@@ -281,24 +285,26 @@ if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
     
-    flag = False  # True: project semantics from one image to the point cloud.
+    flag = True  # True: project semantics from one image to the point cloud.
     if flag:
         # segment the images
         image_segmentor = ImageSegmentation(sam_params)        
-        image_path = '../../data/mission_2/DJI_0247.JPG'
+        image_path = '../../data/mission_2/DJI_0246.JPG'
         masks = image_segmentor.predict(image_path)
-        image_segmentor.save_npy(masks, '../../data/mission_2/DJI_0247.npy')
+        image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
 
         # project the point cloud
         pointcloud_projector = PointcloudProjection()
         pointcloud_projector.read_pointcloud('../../data/model.las')
         pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
-        pointcloud_projector.read_segmentation('../../data/mission_2/DJI_0247.npy')
-        image, associations = pointcloud_projector.project('DJI_0247.JPG')
+        pointcloud_projector.read_segmentation('../../data/DJI_0246.npy')
+        image, associations = pointcloud_projector.project('DJI_0246.JPG')
 
         # add color to points
         t1 = time.time()
-        colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width)
+        radius = 0
+        decaying = 2
+        colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
         t2 = time.time()
         print('Time for adding colors: ', t2 - t1)
 
@@ -324,7 +330,7 @@ if __name__ == "__main__":
     else:
         pass
 
-    Parallel_batch_flag = True
+    Parallel_batch_flag = False
     if Parallel_batch_flag:
         # project the point cloud
         pointcloud_projector = PointcloudProjection()

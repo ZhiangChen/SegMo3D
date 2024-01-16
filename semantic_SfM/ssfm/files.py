@@ -219,7 +219,7 @@ def write_las(points, colors, filename):
     """
     # Create a new LAS file
     hdr = laspy.LasHeader(version="1.2", point_format=3)
-    hdr.scale = [0.01, 0.01, 0.01]  # Example scale factor, adjust as needed
+    hdr.scale = [0.0001, 0.0001, 0.0001]  # Example scale factor, adjust as needed
     hdr.offset = np.min(points, axis=0)
 
     # Create a LasData object
@@ -244,14 +244,14 @@ def write_las(points, colors, filename):
 
 if __name__ == "__main__":
     las_file = "../../data/model.las"
-    #points, colors = read_las_file(las_file)
+    points, colors = read_las_file(las_file)
 
     camera_intrinsics_file = "../../data/camera.json"
     camera_intrinsics = read_camera_intrinsics_webodm(camera_intrinsics_file)
     print(camera_intrinsics)
 
-    camera_list_file = "../../data/shots.geojson"
-    cameras = read_camera_extrinsics_webodm(camera_list_file)
+    #camera_list_file = "../../data/shots.geojson"
+    #cameras = read_camera_extrinsics_webodm(camera_list_file)
 
     #write_las(points, colors, "test.las")
 
