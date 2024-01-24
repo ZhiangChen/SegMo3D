@@ -189,7 +189,7 @@ sam_params = {}
 sam_params['model_name'] = 'sam'
 sam_params['model_path'] = '../sam/sam_vit_h_4b8939.pth'
 sam_params['model_type'] = 'vit_h'
-sam_params['device'] = 'cuda:3'
+sam_params['device'] = 'cuda:1'
 sam_params['points_per_side'] = 64
 sam_params['pred_iou_thresh'] = 0.96
 sam_params['stability_score_thresh'] = 0.92
@@ -205,11 +205,19 @@ if __name__ == '__main__':
 
     batch_test = True
     if batch_test:
-        image_segmentor = ImageSegmentation(sam_params)   
-        image_folder_path = '../../data/mission_2'
-        segmentation_folder_path = '../../data/mission_2_segmentations_0'
-        image_paths = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
-        image_segmentor.batch_predict(image_paths, segmentation_folder_path)
+        site = "courtwright"
+        if site == "box_canyon":
+            image_segmentor = ImageSegmentation(sam_params)   
+            image_folder_path = '../../data/mission_2'
+            segmentation_folder_path = '../../data/mission_2_segmentations_0'
+            image_paths = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+            image_segmentor.batch_predict(image_paths, segmentation_folder_path)
+        elif site == "courtwright":
+            image_segmentor = ImageSegmentation(sam_params)   
+            image_folder_path = '../../data/courtwright/photos'
+            segmentation_folder_path = '../../data/courtwright/segmentations'
+            image_paths = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+            image_segmentor.batch_predict(image_paths, segmentation_folder_path)
 
     write_segmentation_test = False
     if write_segmentation_test:

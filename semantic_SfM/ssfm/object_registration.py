@@ -99,12 +99,14 @@ class ObjectRegistration(object):
         assert os.path.exists(self.segmentation_folder_path), 'Segmentation folder path does not exist.'
         self.segmentation_file_paths = [os.path.join(self.segmentation_folder_path, f) for f in os.listdir(self.segmentation_folder_path) if f.endswith('.npy')]
         self.segmentation_file_paths.sort()   
+        #del self.segmentation_file_paths[1]
 
         # Load association files (.npy) and sort them
         # check if the folder exists
         assert os.path.exists(self.association_folder_path), 'Association folder path does not exist.'
         self.association_file_paths = [os.path.join(self.association_folder_path, f) for f in os.listdir(self.association_folder_path) if f.endswith('.npy')]
         self.association_file_paths.sort()
+        #del self.association_file_paths[1]
 
         # Check if the number of segmentation files and association files are the same
         assert len(self.segmentation_file_paths) == len(self.association_file_paths), 'The number of segmentation files and association files are not the same.'
@@ -120,13 +122,13 @@ class ObjectRegistration(object):
         # initialize data structures
         self.association_p2i = dict()  # the key is the point index and the value is a list of images that include the projection of the point.
         self.pc_segmentation = dict()  # the key is the point index and the value is a list of object probabilities.
-        self.latest_registered_id = -1  # the latest registered object id
+        self.latest_registered_id = 0  # the latest registered object id
         self.associations_pixel2point = []
         self.associations_point2pixel = []
         self.masks = []
 
         # pre-compute gaussian weights
-        self.radius = 0
+        self.radius = 2
         self.decaying = 2
         self.likelihoods = compute_gaussian_likelihood(radius=self.radius, decaying=self.decaying)
 
@@ -168,6 +170,7 @@ class ObjectRegistration(object):
         pixel_object1_image2_ = np.array(pixel_object1_image2)
         # Convert pixel_object1_image2 to a tuple of arrays for advanced indexing
         pixel_indices = (pixel_object1_image2_[:, 0], pixel_object1_image2_[:, 1])
+        print('shape of pixel_object1_image2: {}'.format(pixel_object1_image2_.shape))
 
         # Get object IDs directly using advanced indexing
         object_ids_object1_image2 = segmented_objects_image2[pixel_indices]
@@ -175,6 +178,12 @@ class ObjectRegistration(object):
         # Find the object ID with the maximum count
         unique_ids, counts = np.unique(object_ids_object1_image2, return_counts=True)
         max_count_id = unique_ids[np.argmax(counts)]
+
+        print('max_count_id: {}'.format(max_count_id))
+        # print the smallest value in segmented_objects_image2
+        print('smallest value in segmented_objects_image2: {}'.format(segmented_objects_image2.min()))
+        print('unique_ids: {}'.format(unique_ids))
+        print('counts: {}'.format(counts))
 
         # Get pixel coordinates of the object with the maximum count
         pixel_object2_image2 = np.argwhere(segmented_objects_image2 == max_count_id)
@@ -217,7 +226,6 @@ class ObjectRegistration(object):
         """
         # get object id from pixel_object1_image1 and segmented_objects_image1
         object_id = int(segmented_objects_image1[tuple(pixel_object1_image1[0])]) 
-        print('object_id: {}'.format(object_id))
 
         if point_object2_image2 == None:  # if point_object2_image2 is None, update the object_id with None
             registered_objects_id = None
@@ -232,6 +240,8 @@ class ObjectRegistration(object):
                         point_object_prob_sum[object_id_] += prob
             
             registered_objects_id = max(point_object_prob_sum, key=point_object_prob_sum.get)
+            print('registered_objects_id: {}'.format(registered_objects_id))
+            print('point_object_prob_sum: {}'.format(point_object_prob_sum))
         
         # if there is no object id in object_manager, add the object id and registered_objects_id to object_manager
         if object_id not in self.object_manager.keys():
@@ -346,23 +356,30 @@ class ObjectRegistration(object):
                 # get normalized_likelihoods
                 u, v = pixel
                 normalized_likelihoods = inquire_semantics(v, u, self.padded_segmentation, self.normalized_likelihoods, self.likelihoods, radius=self.radius)
-                                    
-                # get registered object ids from object_manager
-                registered_objects_id = self.object_manager[object_id]
+                
 
-                new_likelihoods_dict = dict()
+                new_likelihoods_dict = dict()  # the key is the object id and the value is the normalized object probability
                 for i in range(len(normalized_likelihoods)):
-                    if normalized_likelihoods[i] > 0:
+                    if normalized_likelihoods[i] > 0.001:
                         registered_object_ids_kernel = self.object_manager[i]
                         if registered_object_ids_kernel == []:
                             new_likelihoods_dict[i+self.latest_registered_id] = normalized_likelihoods[i]
                         else:
-                            if registered_object_ids_kernel[0] not in new_likelihoods_dict.keys():
-                                new_likelihoods_dict[registered_object_ids_kernel[0]] = normalized_likelihoods[i]
+                            if registered_object_ids_kernel[0] == -1:  # this is based on the assumption that there are more false negative (missing) detections than false positive (extra) detections
+                                if registered_object_ids_kernel[0] not in new_likelihoods_dict.keys():
+                                    new_likelihoods_dict[i+self.latest_registered_id] = normalized_likelihoods[i]
+                                else:
+                                    new_likelihoods_dict[i+self.latest_registered_id] += normalized_likelihoods[i]
                             else:
-                                new_likelihoods_dict[registered_object_ids_kernel[0]] += normalized_likelihoods[i]
+                                if registered_object_ids_kernel[0] not in new_likelihoods_dict.keys():
+                                    new_likelihoods_dict[registered_object_ids_kernel[0]] = normalized_likelihoods[i]
+                                else:
+                                    new_likelihoods_dict[registered_object_ids_kernel[0]] += normalized_likelihoods[i]
                     else:
                         pass
+                
+                # get registered object ids from object_manager
+                registered_objects_id = self.object_manager[object_id]
 
                 if registered_objects_id == []: # this object is not registered
                     self.pc_segmentation[point] = new_likelihoods_dict
@@ -398,7 +415,7 @@ class ObjectRegistration(object):
         
         Returns
         -------
-        None
+        semantics : 1D array of shape (N_points,), where each element is a semantics id
         """
         # read pointcloud from self.pointcloud_path
         points, colors = read_las_file(self.pointcloud_path)
@@ -438,12 +455,15 @@ class ObjectRegistration(object):
 
         # Write the LAS file
         las.write(save_las_path)
+        return semantics
 
     def object_registration(self, iou_threshold=0.75):
         M_images = len(self.segmentation_association_pairs)
 
         # iterate over all images
         for i in range(M_images):
+            # print the current and total number of images
+            print('Current image: {}, Total number of images: {}'.format(i, M_images))
             # load segmentation and association files
             segmentation_file_path, association_file_path = self.segmentation_association_pairs[i]
             print(segmentation_file_path, association_file_path)
@@ -493,10 +513,8 @@ class ObjectRegistration(object):
             self.masks.append(mask1)
             t3 = time.time()
             print('Time to create a boolean mask for pixel_objects_image1: {}'.format(t3 - t2))
-
-            self.object_manager = dict()  # the key is the object id and the value is a list of registered object ids.
-
             
+            self.object_manager = dict()  # the key is the object id and the value is a list of registered object ids.
             # iterate over all objects in image1
             for j in range(N_objects):
                 # get pixel coordinates of segmented_objects_image1 == j
@@ -505,7 +523,6 @@ class ObjectRegistration(object):
                 t5 = time.time()
                 print('Time to get pixel coordinates of segmented_objects_image1 == {}: {}'.format(j, t5 - t4))
                 
-
                 # get point indices of pixel_object1_image1 using association1. However, not all pixels in pixel_object1_image1 have a corresponding point index.
                 point_object1_image1 = [associations1_pixel2point[tuple((p[0], p[1]))] for p in pixel_object1_image1 if mask1[p[0], p[1]]]
                 
@@ -576,6 +593,13 @@ class ObjectRegistration(object):
                             self.update_object_manager(pixel_object1_image1, segmented_objects_image1, point_object2_image2)
                             t5 = time.time()
                             print('Time to update object_manager: {}'.format(t5 - t4))
+                            save_points_to_las(point_object2_image2, '../../data/point_object2_image2_{}_{}.las'.format(key_image, j))
+                            save_points_to_las(point_object1_image1, '../../data/point_object1_image1_{}_{}.las'.format(key_image, j))
+                            # print object id of pixel_object1_image1
+                            print('object id of pixel_object1_image1: {}'.format(segmented_objects_image1[tuple(pixel_object1_image1[0])]))
+                            # print object id of pixel_object2_image2
+                            print('object id of pixel_object2_image2: {}'.format(segmented_objects_image2[tuple(pixel_object2_image2[0])]))
+
                         else:
                             # update object_manager
                             self.update_object_manager(pixel_object1_image1, segmented_objects_image1, None)
@@ -584,18 +608,57 @@ class ObjectRegistration(object):
 
                 print('---------------------------------------------------')
 
+            print('object_manager before purge: {}'.format(self.object_manager))
             # purge self.pc_segmentation using self.object_manager
             self.purge_pc_segmentation()
             # print object_manager
             print('object_manager: {}'.format(self.object_manager))
-            # update self.pc_segmentation
+
             self.update_pc_segmentation(associations1_pixel2point, segmented_objects_image1)
 
 
             print('===================================================')
         
 
+def save_points_to_las(point_object_image, save_las_path):
+    """
+    Save a list of points to a .las file.
 
+    Parameters
+    ----------
+    point_object_image : list of point indices
+    save_las_path : str, path to save the semantic pointcloud
+
+    Returns
+    -------
+    None
+    """
+    # read pointcloud from self.pointcloud_path
+    points, colors = read_las_file('../../data/model.las')
+    # get points_object_image
+    points_object_image = points[point_object_image]
+    colors_object_image = colors[point_object_image]
+
+    # construct a .las file
+    hdr = laspy.LasHeader(version="1.2", point_format=3)
+    hdr.scale = [0.0001, 0.0001, 0.0001]  # Example scale factor, adjust as needed
+    hdr.offset = np.min(points_object_image, axis=0)
+
+    # Create a LasData object
+    las = laspy.LasData(hdr)
+
+    # Add points
+    las.x = points_object_image[:, 0]
+    las.y = points_object_image[:, 1]
+    las.z = points_object_image[:, 2]
+
+    # Add colors
+    las.red = colors_object_image[:, 0]
+    las.green = colors_object_image[:, 1]
+    las.blue = colors_object_image[:, 2]
+
+    # Write the LAS file
+    las.write(save_las_path)
                 
 
 
@@ -611,20 +674,10 @@ if __name__ == "__main__":
     object_registration = ObjectRegistration(pointcloud_path, segmentation_folder_path, association_folder_path)
     t2 = time.time()
     print('Time to create object registration object: {}'.format(t2 - t1))
-    object_registration.object_registration()
-    object_registration.extract_semantic_pointcloud('../../data/semantic_pointcloud.las')
+    object_registration.object_registration(iou_threshold=0.5)
+    semantics = object_registration.extract_semantic_pointcloud('../../data/semantic_pointcloud.las')
+    # print the unique semantics
+    unique_semantics = np.unique(semantics)
+    print('unique_semantics: {}'.format(unique_semantics))
+    print('Number of unique semantics: {}'.format(len(unique_semantics)))
 
-
-"""
-semantics = []
-N = points.shape[0]
-for i in range(N):
-    if i in object_registration.pc_segmentation.keys():
-        # get semantics id with the maximum probability
-        semantics_id = max(object_registration.pc_segmentation[i], key=object_registration.pc_segmentation[i].get)
-        semantics.append(semantics_id)
-    else:
-        semantics.append(-1)
-
-semantics = np.array(semantics)
-"""

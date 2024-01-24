@@ -3,24 +3,10 @@ import os
 from numba import jit
 import concurrent.futures
 
+# association on all points
 @jit(nopython=True)
 def update_image_and_associations(image, z_buffer, points, colors, height, width):
-    """
-    Arguments:
-        image (np.array): The image to be updated. 2D array of shape (height, width, 3) with zeros.
-        z_buffer (np.array): The z-buffer to be updated. 2D array of shape (height, width) with inf.
-        points (np.array): The points to be projected onto the image. 2D array of shape (N, 3) where N is the number of points.
-        colors (np.array): The colors of the points. 2D array of shape (N, 3) where N is the number of points.
-        height (int): The height of the image. 
-        width (int): The width of the image. 
-
-    Returns:
-        image (np.array): The updated image. 
-        z_buffer (np.array): The updated z-buffer. 
-        associations (np.array): A 2D array of shape (N, 3) where N is the number of valid points that are projected onto the image. For each point, the first two elements are the u, v coordinate of the point in the image and the third element is the index of the point in the original points array. u is the axis of width and v is the axis of height.
-    """
-    associations_pixel = []
-    associations_point = []
+    pixel_table = np.full((height, width), -1, dtype=np.int32)
 
     for i in range(points.shape[0]):
         x, y, z = points[i]
@@ -29,17 +15,17 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
 
         if 0 <= px < width and 0 <= py < height:
             if z < z_buffer[py, px]:
-                if z_buffer[py, px] == np.inf:
-                    associations_pixel.append([px, py])
-                    associations_point.append(i)
-                else:
-                    index = associations_pixel.index([px, py])
-                    associations_point[index] = i
-
                 z_buffer[py, px] = z
-                image[py, px] = color                
+                pixel_table[py, px] = i
+                image[py, px] = color
 
-    associations = np.hstack((np.array(associations_pixel), np.array(associations_point).reshape(-1, 1)))
+    # get the pixel of valid associations
+    y_indices, x_indices = np.where(pixel_table != -1)
+    associations = np.empty((len(y_indices), 3), dtype=np.int32)
+    for idx in range(len(y_indices)):
+        associations[idx, 0] = x_indices[idx]
+        associations[idx, 1] = y_indices[idx]
+        associations[idx, 2] = pixel_table[y_indices[idx], x_indices[idx]]
 
     return image, z_buffer, associations
 
@@ -118,28 +104,26 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
     likelihoods = compute_gaussian_likelihood(radius, decaying)
 
     # Vectorized random color generation
-    N = int(np.ceil(segmentation.max()))
+    N = int(segmentation.max() + 1)
     random_colors = np.random.randint(0, 255, (N, 3)).astype(np.int64)
     
     # pad segmentation image by the size of radius with -1
     padded_segmentation = -np.ones((2*radius+image_height+2, 2*radius+image_width+2))
     padded_segmentation[radius+1:radius+image_height+1, radius+1:radius+image_width+1] = segmentation
 
-    # Allocate normalized_likelihoods outside the loop
-    normalized_likelihoods = np.zeros(int(segmentation.max() + 1), dtype=np.float64)
-
     # Count the number of points for each semantic class
-    point_count = np.zeros(int(segmentation.max() + 1), dtype=np.int64)
+    #point_count = np.zeros(N, dtype=np.int64)
     for i in range(associations.shape[0]):
         u, v, point_index = associations[i]
+        normalized_likelihoods = np.zeros(N, dtype=np.float64)
         normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=radius)
 
         if normalized_likelihoods.max() > 0:
             semantic_id = np.argmax(normalized_likelihoods)
             colors[point_index] = random_colors[int(semantic_id) - 1]
-            point_count[int(semantic_id)] += 1
+            #point_count[int(semantic_id)] += 1
     
-    print('Point count: ', point_count)
+    #print('Point count: ', point_count)
     return colors
 
 
@@ -205,16 +189,14 @@ class PointcloudProjection(object):
         # Drop the homogeneous component (w)
         points_camera_space = points_transformed[:, :3]
 
-        points_projected = np.matmul(points_camera_space, camera_intrinsics.T)
-        points_projected /= points_projected[:, -1].reshape(-1, 1)
+        points_projected_d = np.matmul(points_camera_space, camera_intrinsics.T)
+        points_projected = points_projected_d / points_projected_d[:, -1].reshape(-1, 1)
+        # replace depth 
+        points_projected[:, 2] = points_projected_d[:, 2]
 
         # Initialize image (2D array) and z-buffer
         image = np.zeros((image_height, image_width, 3), dtype=np.uint8)
         z_buffer = np.full((image_height, image_width), np.inf)
-
-        # Assuming points_projected and colors are NumPy arrays
-        x, y, z = points_projected.T
-        px, py = x.astype(int), y.astype(int)
 
         # Update image and get associations
         image, z_buffer, associations  = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
@@ -284,31 +266,52 @@ class PointcloudProjection(object):
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    
+    site = 'courtwright'
+
     flag = True  # True: project semantics from one image to the point cloud.
     if flag:
-        # segment the images
-        image_segmentor = ImageSegmentation(sam_params)        
-        image_path = '../../data/mission_2/DJI_0246.JPG'
-        masks = image_segmentor.predict(image_path)
-        image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
+        if site == 'box_canyon':
+            # segment the images
+            image_segmentor = ImageSegmentation(sam_params)        
+            image_path = '../../data/mission_2/DJI_0246.JPG'
+            masks = image_segmentor.predict(image_path)
+            image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
 
-        # project the point cloud
-        pointcloud_projector = PointcloudProjection()
-        pointcloud_projector.read_pointcloud('../../data/model.las')
-        pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
-        pointcloud_projector.read_segmentation('../../data/DJI_0246.npy')
-        image, associations = pointcloud_projector.project('DJI_0246.JPG')
+            # project the point cloud
+            pointcloud_projector = PointcloudProjection()
+            pointcloud_projector.read_pointcloud('../../data/model.las')
+            pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+            pointcloud_projector.read_segmentation('../../data/DJI_0246.npy')
+            image, associations = pointcloud_projector.project('DJI_0246.JPG')
 
-        # add color to points
-        t1 = time.time()
-        radius = 0
-        decaying = 2
-        colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
-        t2 = time.time()
-        print('Time for adding colors: ', t2 - t1)
+            # add color to points
+            t1 = time.time()
+            radius = 0
+            decaying = 2
+            colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+            t2 = time.time()
+            print('Time for adding colors: ', t2 - t1)
 
-        write_las(pointcloud_projector.points, colors, "../../data/test.las")
+            write_las(pointcloud_projector.points, colors, "../../data/test.las")
+
+        elif site == 'courtwright':
+
+            # project the point cloud
+            pointcloud_projector = PointcloudProjection()
+            pointcloud_projector.read_pointcloud('../../data/courtwright/courtwright.las')
+            pointcloud_projector.read_camera_parameters('../../data/courtwright/cameras.json', '../../data/courtwright/shots.geojson')
+            pointcloud_projector.read_segmentation('../../data/courtwright/segmentations/DJI_0590.npy')
+            image, associations = pointcloud_projector.project('DJI_0590.JPG')
+
+            # add color to points
+            t1 = time.time()
+            radius = 0
+            decaying = 2
+            colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+            t2 = time.time()
+            print('Time for adding colors: ', t2 - t1)
+
+            write_las(pointcloud_projector.points, colors, "../../data/courtwright_test.las")
 
     else:
         pass
@@ -332,23 +335,32 @@ if __name__ == "__main__":
 
     Parallel_batch_flag = False
     if Parallel_batch_flag:
-        # project the point cloud
-        pointcloud_projector = PointcloudProjection()
-        pointcloud_projector.read_pointcloud('../../data/model.las')
-        pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+        
+        if site == 'box_canyon':
+            # project the point cloud
+            pointcloud_projector = PointcloudProjection()
+            pointcloud_projector.read_pointcloud('../../data/model.las')
+            pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
 
-        # batch project
-        image_folder_path = '../../data/mission_2'
-        save_folder_path = '../../data/mission_2_associations_parallel'
+            # batch project
+            image_folder_path = '../../data/mission_2'
+            save_folder_path = '../../data/mission_2_associations_parallel'
 
-        image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
-        pointcloud_projector.parallel_batch_project(image_list, save_folder_path)
+            image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+            pointcloud_projector.parallel_batch_project(image_list, save_folder_path)
+
+        elif site == 'courtwright':
+            # project the point cloud
+            pointcloud_projector = PointcloudProjection()
+            pointcloud_projector.read_pointcloud('../../data/courtwright/courtwright.las')
+            pointcloud_projector.read_camera_parameters('../../data/courtwright/cameras.json', '../../data/courtwright/shots.geojson')
+
+            # batch project
+            image_folder_path = '../../data/courtwright/photos'
+            save_folder_path = '../../data/courtwright/associations'
+
+            image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+            pointcloud_projector.parallel_batch_project(image_list, save_folder_path)
 
     else:
         pass
-
-
-
-
-
-
