@@ -15,11 +15,7 @@ Designing data structures and algorithms is important to improve the efficiency 
 ### 1. Point-pixel association
 For each image, the point-pixel association is represented by a 2D array of shape (N, 3), where N is the number of valid points that are projected onto an image. For each point(u, v, point_index), the first two elements are the u, v coordinate of the point in the image and the third element is the index of the point in the original points array. u is the axis of width and v is the axis of height.
 
-The point-pixel association is precomputed in parallel processing, as implemented by `ssfm.probabilistic_projection.parallel_batch_projection`. The association results are saved to files. When loading the association for each image, we create a dictionary where the key is pixel coordinate (u, v) and the value is point index.  
-```
-associations1_pixel2point = {tuple(association[:2]): association[2] for association in associations1}
-``` 
-
+The point-pixel association is precomputed in parallel processing, as implemented by `ssfm.probabilistic_projection.parallel_batch_projection`. 
 
 ### 2. Point-image association
 The point-image association, `ObjectRegistration.association_p2i`, is a dictionary where the key is the point index and the value is a list of images that include the projection of the point. 
@@ -80,7 +76,7 @@ for j in range(M_images):
                 update_object_manager(object_manager, pixel_object1_image1, segmented_objects_image1, points_object2_image2=None, merge=False)
 
     update_association_p2i(association_p2i, j)
-    purge_object_manager(object_manager)
+    purge_pointcloud_segmentation(object_manager)
     update_pointcloud_segmentation(pc_segmentation, object_manager, association1)
 ```
 
@@ -102,23 +98,7 @@ object_id = sort_count(object_ids_object1_image2)  # O(N log N)
 pixel_object2_image2 = segmented_objects_images.get_object(object_id)  # O(N)
 ```
 
-### 3. Calculate IoU
-```
-input: points_object1_image2, points_object2_image1
-
-points1 = filter_valid_points(points_object1_image2)
-points2 = filter_valid_points(points_object2_image1)
-points1_hash = hash(points1)
-points2_hash = hash(points2)
-points_hash = concatenate(points1_hash, points2_hash)
-intersection = isin(points1_hash, points2_hash)
-union = unique(points_hash)
-IoU = len(intersection) / len(union)
-```
-
-The Numpy functions $isin()$ and $unique()$ have efficient implementations by utilizing merge sort algorithms, both with time complexity of $O(P\cdot log_2(P))$.
-
-### 4. Update object manager
+### 3. Update object manager
 
 ```
 input: pixel_object1_image1, segmented_objects_image1, points_object2_image2, merge
@@ -133,7 +113,7 @@ else:
 
 The `get_object_id(.)` returns the object id with the largest summed likelihood. 
 
-### 5. Purge object manager
+### 4. Purge pointcloud segmentation
 When an object id in a new image has multiple unique object ids, which indicates the twin registration problem, we need to purge the repeated, registered object ids.  
 
 ### 5. Update pointcloud segmentation

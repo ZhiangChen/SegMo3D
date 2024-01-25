@@ -163,7 +163,8 @@ class PointcloudProjection(object):
             segmentation_path (str): Path to the segmentation file.
         """
         assert os.path.exists(segmentation_path), 'Segmentation path does not exist.'
-        self.segmentation = np.load(segmentation_path)
+        self.segmentation = np.load(segmentation_path)  # for adding color to points
+
 
     def project(self, frame_key):
         """
@@ -237,6 +238,8 @@ class PointcloudProjection(object):
 
     def parallel_batch_project(self, frame_keys, save_folder_path, num_workers=8):
         """
+        Execute the processing of frames in parallel using multiprocessing.
+
         Arguments:
             frame_keys (list): A list of frame keys.
             save_folder_path (str): The path to save the images.
@@ -244,23 +247,22 @@ class PointcloudProjection(object):
         if not os.path.exists(save_folder_path):
             os.makedirs(save_folder_path)
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_workers)
-        futures = [executor.submit(self.process_frame, frame_key, save_folder_path) for frame_key in frame_keys]
+        with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+            futures = [executor.submit(self.process_frame, frame_key, save_folder_path) 
+                       for frame_key in frame_keys]
 
-        try:
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                # Process results or handle exceptions if any
-                print(f'Task {i+1}/{len(frame_keys)} completed')
+            try:
+                for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                    # Process results or handle exceptions if any
+                    print(f'Task {i+1}/{len(frame_keys)} completed')
 
-        except KeyboardInterrupt:
-            print("Interrupted by user, cancelling tasks...")
-            for future in futures:
-                future.cancel()
-        except Exception as e:
-            print(f"An error occurred: {e}")
-        finally:
-            executor.shutdown(wait=False)
-            print("Executor shut down.")
+            except KeyboardInterrupt:
+                print("Interrupted by user, cancelling tasks...")
+                # futures cancellation if needed
+            except Exception as e:
+                print(f"An error occurred: {e}")
+            finally:
+                print("Executor shut down.")
 
 
 if __name__ == "__main__":
@@ -268,7 +270,7 @@ if __name__ == "__main__":
     import time
     site = 'courtwright'
 
-    flag = True  # True: project semantics from one image to the point cloud.
+    flag = False  # True: project semantics from one image to the point cloud.
     if flag:
         if site == 'box_canyon':
             # segment the images
@@ -333,9 +335,8 @@ if __name__ == "__main__":
     else:
         pass
 
-    Parallel_batch_flag = False
+    Parallel_batch_flag = True
     if Parallel_batch_flag:
-        
         if site == 'box_canyon':
             # project the point cloud
             pointcloud_projector = PointcloudProjection()

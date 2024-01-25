@@ -132,8 +132,6 @@ class ObjectRegistration(object):
         self.decaying = 2
         self.likelihoods = compute_gaussian_likelihood(radius=self.radius, decaying=self.decaying)
 
-        # debug
-
     
     def update_association_p2i(self, point_object1_image1, image_index):
         """
@@ -170,7 +168,7 @@ class ObjectRegistration(object):
         pixel_object1_image2_ = np.array(pixel_object1_image2)
         # Convert pixel_object1_image2 to a tuple of arrays for advanced indexing
         pixel_indices = (pixel_object1_image2_[:, 0], pixel_object1_image2_[:, 1])
-        print('shape of pixel_object1_image2: {}'.format(pixel_object1_image2_.shape))
+        #print('shape of pixel_object1_image2: {}'.format(pixel_object1_image2_.shape))
 
         # Get object IDs directly using advanced indexing
         object_ids_object1_image2 = segmented_objects_image2[pixel_indices]
@@ -179,11 +177,11 @@ class ObjectRegistration(object):
         unique_ids, counts = np.unique(object_ids_object1_image2, return_counts=True)
         max_count_id = unique_ids[np.argmax(counts)]
 
-        print('max_count_id: {}'.format(max_count_id))
+        #print('max_count_id: {}'.format(max_count_id))
         # print the smallest value in segmented_objects_image2
-        print('smallest value in segmented_objects_image2: {}'.format(segmented_objects_image2.min()))
-        print('unique_ids: {}'.format(unique_ids))
-        print('counts: {}'.format(counts))
+        #print('smallest value in segmented_objects_image2: {}'.format(segmented_objects_image2.min()))
+        #print('unique_ids: {}'.format(unique_ids))
+        #print('counts: {}'.format(counts))
 
         # Get pixel coordinates of the object with the maximum count
         pixel_object2_image2 = np.argwhere(segmented_objects_image2 == max_count_id)
@@ -529,7 +527,7 @@ class ObjectRegistration(object):
                 self.point_count[j] = len(point_object1_image1)
 
                 t6 = time.time()
-                print('Time to get point indices of pixel_object1_image1: {}'.format(t6 - t5))
+                print('Time to get point_object1_image1: {}'.format(t6 - t5))
 
                 # get key images of point_object1_image1
                 key_images_lists = [self.association_p2i[point] for point in point_object1_image1 if point in self.association_p2i.keys()]
@@ -593,12 +591,8 @@ class ObjectRegistration(object):
                             self.update_object_manager(pixel_object1_image1, segmented_objects_image1, point_object2_image2)
                             t5 = time.time()
                             print('Time to update object_manager: {}'.format(t5 - t4))
-                            save_points_to_las(point_object2_image2, '../../data/point_object2_image2_{}_{}.las'.format(key_image, j))
-                            save_points_to_las(point_object1_image1, '../../data/point_object1_image1_{}_{}.las'.format(key_image, j))
-                            # print object id of pixel_object1_image1
-                            print('object id of pixel_object1_image1: {}'.format(segmented_objects_image1[tuple(pixel_object1_image1[0])]))
-                            # print object id of pixel_object2_image2
-                            print('object id of pixel_object2_image2: {}'.format(segmented_objects_image2[tuple(pixel_object2_image2[0])]))
+                            #save_points_to_las(point_object2_image2, '../../data/point_object2_image2_{}_{}.las'.format(key_image, j))
+                            #save_points_to_las(point_object1_image1, '../../data/point_object1_image1_{}_{}.las'.format(key_image, j))
 
                         else:
                             # update object_manager

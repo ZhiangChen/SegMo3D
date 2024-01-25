@@ -37,6 +37,9 @@ where $P'_c = [x, y, z]$, $p_i = [u', v', w']$ and $K = [[f_x, 0, c_x],[0, f_y, 
 
 The projected point $p_i$ is in homogeneous coordinates $(u', v', w')$. To convert it to Cartesian coordinates (u, v) on the image plane, divide by $w'$.
 
+4. **Point Reduction Explanation:**   
+
+When projecting a point cloud onto an image plane, it is common for multiple points to converge into a single pixel. This convergence typically occurs for two reasons: (1) the proximity of points to one another in space, or (2) the alignment of points along a straight line relative to the perspective of the projection. In such cases, only the points nearest to the camera plane are retained in the final image. In other cases where pixels on images are not always segmented, points falling into those pixels will not have semantics, resulting in the point reduction in the segmented point cloud.  
 
 
 ## Camera extrinsic matrix
@@ -85,3 +88,5 @@ Debugging intrinsic matrix can be cumbersome. Here are several important steps t
 
 3. Exam the projected image. Resize the image if the orignal size is too large. The projected image may contain many black pixels because the original point cloud is sparser than image pixels. Nearest interpolation can be used to fill the black pixels. Details can be found in the tutorial [Jupyter Notebook](../semantic_SfM/ssfm/projection.ipynb). 
 
+
+ 

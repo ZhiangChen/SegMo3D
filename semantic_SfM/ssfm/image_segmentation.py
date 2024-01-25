@@ -209,7 +209,7 @@ if __name__ == '__main__':
         if site == "box_canyon":
             image_segmentor = ImageSegmentation(sam_params)   
             image_folder_path = '../../data/mission_2'
-            segmentation_folder_path = '../../data/mission_2_segmentations_0'
+            segmentation_folder_path = '../../data/mission_2_segmentations'
             image_paths = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
             image_segmentor.batch_predict(image_paths, segmentation_folder_path)
         elif site == "courtwright":
