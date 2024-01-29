@@ -236,6 +236,7 @@ class ObjectRegistration(object):
                         point_object_prob_sum[object_id_] = prob
                     else:
                         point_object_prob_sum[object_id_] += prob
+
             
             registered_objects_id = max(point_object_prob_sum, key=point_object_prob_sum.get)
             print('registered_objects_id: {}'.format(registered_objects_id))
@@ -346,6 +347,7 @@ class ObjectRegistration(object):
         """
         # iterate over associations1_pixel2point
         for pixel, point in associations1_pixel2point.items():
+
             # get object id from segmented_objects_image1
             object_id = int(segmented_objects_image1[pixel])
             if object_id == -1:  # this pixel is not associated with semantics
@@ -375,6 +377,7 @@ class ObjectRegistration(object):
                                     new_likelihoods_dict[registered_object_ids_kernel[0]] += normalized_likelihoods[i]
                     else:
                         pass
+                
                 
                 # get registered object ids from object_manager
                 registered_objects_id = self.object_manager[object_id]
@@ -462,6 +465,7 @@ class ObjectRegistration(object):
         for i in range(M_images):
             # print the current and total number of images
             print('Current image: {}, Total number of images: {}'.format(i, M_images))
+            logger.info('Current image: {}, Total number of images: {}'.format(i, M_images))
             # load segmentation and association files
             segmentation_file_path, association_file_path = self.segmentation_association_pairs[i]
             print(segmentation_file_path, association_file_path)
@@ -496,21 +500,31 @@ class ObjectRegistration(object):
                 associations1_pixel2point[tuple(association[:2])] = association[2]
                 associations1_point2pixel[association[2]] = tuple(association[:2])"""
             associations1_pixel2point = {tuple(association[:2]): association[2] for association in associations1}
-            associations1_point2pixel = {association[2]: tuple(association[:2]) for association in associations1}
+            associations1_point2pixel = {association[2]: tuple(association[:2]) for association in associations1} 
+
             self.associations_pixel2point.append(associations1_pixel2point)
             self.associations_point2pixel.append(associations1_point2pixel)
             t3 = time.time()
             print('Time to create dictionaries for associations1: {}'.format(t3 - t2))
 
+            # create a boolean mask for segmented_objects_image1 for all pixels other than -1
+            mask1_seg = np.zeros(segmented_objects_image1.shape, dtype=bool)
+            mask1_seg[segmented_objects_image1 != -1] = True 
+
             # create a boolean mask for pixel_objects_image1
             t2 = time.time()
             pixels_array = np.array(list(pixel_objects_image1))
             rows, cols = pixels_array[:, 0], pixels_array[:, 1]
-            mask1 = np.zeros(segmented_objects_image1.shape, dtype=bool)
-            mask1[rows, cols] = True
+            mask1_asso = np.zeros(segmented_objects_image1.shape, dtype=bool)
+            mask1_asso[rows, cols] = True
+
+            # combine mask1_seg and mask1_asso
+            mask1 = np.logical_and(mask1_seg, mask1_asso)
+
             self.masks.append(mask1)
             t3 = time.time()
             print('Time to create a boolean mask for pixel_objects_image1: {}'.format(t3 - t2))
+
             
             self.object_manager = dict()  # the key is the object id and the value is a list of registered object ids.
             # iterate over all objects in image1
@@ -523,6 +537,7 @@ class ObjectRegistration(object):
                 
                 # get point indices of pixel_object1_image1 using association1. However, not all pixels in pixel_object1_image1 have a corresponding point index.
                 point_object1_image1 = [associations1_pixel2point[tuple((p[0], p[1]))] for p in pixel_object1_image1 if mask1[p[0], p[1]]]
+                
                 
                 self.point_count[j] = len(point_object1_image1)
 
@@ -551,6 +566,7 @@ class ObjectRegistration(object):
                     # iterate over all key images
                     for key_image in key_images:
                         # get associations2 for key_image
+                        logger.debug('key_image: {}'.format(key_image))
                         associations2_pixel2point = self.associations_pixel2point[key_image]
                         associations2_point2pixel = self.associations_point2pixel[key_image]
                         mask2 = self.masks[key_image]
@@ -601,6 +617,7 @@ class ObjectRegistration(object):
                             print('Time to update object_manager: {}'.format(t5 - t4))
 
                 print('---------------------------------------------------')
+
 
             print('object_manager before purge: {}'.format(self.object_manager))
             # purge self.pc_segmentation using self.object_manager
@@ -657,11 +674,26 @@ def save_points_to_las(point_object_image, save_las_path):
 
 
 if __name__ == "__main__":
+    #importing the module 
+    import logging 
+
+    #now we will Create and configure logger 
+    logging.basicConfig(filename="std.log", 
+                        format='%(asctime)s %(message)s', 
+                        filemode='w') 
+
+    #Let us Create an object 
+    global logger
+    logger=logging.getLogger() 
+
+    #Now we are going to Set the threshold of logger to DEBUG 
+    logger.setLevel(logging.DEBUG) 
+
     # Set paths
     pointcloud_path = '../../data/model.las'
-    segmentation_folder_path = '../../data/mission_2_segmentations_test'
+    segmentation_folder_path = '../../data/mission_2_segmentations'
     image_folder_path = '../../data/mission_2'
-    association_folder_path = '../../data/mission_2_associations_test'
+    association_folder_path = '../../data/mission_2_associations'
 
     # Create object registration object
     t1 = time.time()

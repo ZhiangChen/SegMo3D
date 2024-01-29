@@ -85,13 +85,13 @@ class BatchPreparation(object):
         pixel_objects_image1 = associations1[:, :2]  # 2D array of shape (N, 2), where each row is a pixel coordinate (u, v)
         associations1_pixel2point = {tuple(association[:2]): association[2] for association in associations1}
         associations1_point2pixel = {association[2]: tuple(association[:2]) for association in associations1}
-        print("created associations1_pixel2point and associations1_point2pixel for {}".format(segmentation_file_path))
+        #print("created associations1_pixel2point and associations1_point2pixel for {}".format(segmentation_file_path))
 
         pixels_array = np.array(list(pixel_objects_image1))
         rows, cols = pixels_array[:, 0], pixels_array[:, 1]
         mask1 = np.zeros(segmented_objects_image1.shape, dtype=bool)
         mask1[rows, cols] = True
-        print("created mask1 for {}".format(segmentation_file_path))
+        #print("created mask1 for {}".format(segmentation_file_path))
 
         # create a folder for the current segmentation-association pair
         folder_name = os.path.splitext(os.path.basename(segmentation_file_path))[0]
