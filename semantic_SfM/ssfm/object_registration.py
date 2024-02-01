@@ -475,7 +475,6 @@ class ObjectRegistration(object):
             t2 = time.time()
             print('Time to load segmentation and association files: {}'.format(t2 - t1))
 
-            self.point_count = np.zeros(segmented_objects_image1.max() + 1, dtype=np.int32)
             
             # get image height and width of segmented_objects_image1
             image_height, image_width = segmented_objects_image1.shape
@@ -538,8 +537,6 @@ class ObjectRegistration(object):
                 # get point indices of pixel_object1_image1 using association1. However, not all pixels in pixel_object1_image1 have a corresponding point index.
                 point_object1_image1 = [associations1_pixel2point[tuple((p[0], p[1]))] for p in pixel_object1_image1 if mask1[p[0], p[1]]]
                 
-                
-                self.point_count[j] = len(point_object1_image1)
 
                 t6 = time.time()
                 print('Time to get point_object1_image1: {}'.format(t6 - t5))
