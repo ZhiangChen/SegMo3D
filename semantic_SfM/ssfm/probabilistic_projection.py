@@ -24,10 +24,10 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
                     image[py, px] = color
 
     # get the pixel of valid associations
-    y_indices, x_indices = np.where(pixel2point != -1)
+    u_indices, v_indices = np.where(pixel2point != -1)
     point2pixel = np.full((N_points, 2), -1, dtype=np.int16)
-    for idx in range(len(y_indices)):
-        point2pixel[pixel2point[y_indices[idx], x_indices[idx]]] = np.array([x_indices[idx], y_indices[idx]])
+    for idx in range(len(u_indices)):
+        point2pixel[pixel2point[u_indices[idx], v_indices[idx]]] = np.array([u_indices[idx], v_indices[idx]])
 
     return image, z_buffer, pixel2point, point2pixel
 
@@ -48,7 +48,9 @@ def inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelih
         normalized_likelihoods (np.array): A 1D array of shape (N,) where N is the number of semantic classes. The index is the semantic 
             id and the value is the normalized likelihood. 
     """
-
+    # reset normalized_likelihoods
+    normalized_likelihoods[:] = 0
+    
     # Extract semantic ids and corresponding likelihoods
     for i in range(-radius, radius + 1):
         for j in range(-radius, radius + 1):
@@ -300,12 +302,10 @@ class PointcloudProjection(object):
             finally:
                 print("Executor shut down.")
 
-
-    def build_associations_keyimage(self, read_folder_path, save_file_path):
+    def build_associations_keyimage(self, read_folder_path):
         """
         Arguments:
             read_folder_path (str): The path to the folder containing the point2pixel files.
-            save_file_path (str): The path to save the associations.
         """
         point2pixel_folder_path = os.path.join(read_folder_path, 'point2pixel')
         assert os.path.exists(point2pixel_folder_path), 'Point2pixel folder path does not exist.'
@@ -326,7 +326,9 @@ class PointcloudProjection(object):
             associations_keyimage[ point2pixel[:, 0]!=-1,  i] = True
 
         # save associations
+        save_file_path = os.path.join(read_folder_path, 'associations_keyimage.npy')
         np.save(save_file_path, associations_keyimage)
+
 
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
@@ -335,9 +337,9 @@ if __name__ == "__main__":
 
     flag = False  # True: project semantics from one image to the point cloud.
     batch_flag = False  # True: save the associations of all images in sequence.
-    Parallel_batch_flag = False # True: save the associations of all images in parallel.
+    Parallel_batch_flag = True # True: save the associations of all images in parallel.
     keyimage_flag = True
-    
+
     if flag:
         if site == 'box_canyon':
             # segment the images
@@ -440,6 +442,6 @@ if __name__ == "__main__":
     if keyimage_flag:
         pointcloud_projector = PointcloudProjection()
         t1 = time.time()
-        pointcloud_projector.build_associations_keyimage('../../data/mission_2_associations_parallel', '../../data/mission_2_associations_keyimage.npy')
+        pointcloud_projector.build_associations_keyimage('../../data/mission_2_associations_parallel')
         t2 = time.time()
         print('Time for building associations: ', t2 - t1)

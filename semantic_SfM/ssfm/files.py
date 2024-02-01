@@ -250,6 +250,9 @@ if __name__ == "__main__":
     camera_intrinsics = read_camera_intrinsics_webodm(camera_intrinsics_file)
     print(camera_intrinsics)
 
+    # print the number of points
+    print("Number of points: {}".format(points.shape[0]))
+
     #camera_list_file = "../../data/shots.geojson"
     #cameras = read_camera_extrinsics_webodm(camera_list_file)
 
