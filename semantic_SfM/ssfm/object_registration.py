@@ -602,6 +602,9 @@ class ObjectRegistration(object):
                         t5 = time.time()
                         print('Time to calculate 3D IoU: {}'.format(t5 - t4))
 
+                        print("image_id: {}, object_id: {}, key_image: {}, iou: {}".format(i, j, key_image, iou))
+                        logger.info("image_id: {}, object_id: {}, key_image: {}, iou: {}".format(i, j, key_image, iou))
+
                         if iou >= iou_threshold:
                             # update object_manager
                             self.update_object_manager(pixel_object1_image1, segmented_objects_image1, point_object2_image2)
@@ -678,7 +681,7 @@ if __name__ == "__main__":
     import logging 
 
     #now we will Create and configure logger 
-    logging.basicConfig(filename="std.log", 
+    logging.basicConfig(filename="std_old.log", 
                         format='%(asctime)s %(message)s', 
                         filemode='w') 
 
