@@ -54,7 +54,7 @@ def inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelih
     # Extract semantic ids and corresponding likelihoods
     for i in range(-radius, radius + 1):
         for j in range(-radius, radius + 1):
-            semantic_id = padded_segmentation[v + j + radius, u + i + radius]
+            semantic_id = padded_segmentation[u + j + radius, v + i + radius]
             if semantic_id != -1:
                 normalized_likelihoods[int(semantic_id)] += likelihoods[int((i + radius) * (2 * radius + 1) + (j + radius))]
 
@@ -119,7 +119,7 @@ def add_color_to_points(point2pixel, colors, segmentation, image_height, image_w
         u, v = point2pixel[point_index]
         if u == -1 or v == -1:
             continue
-
+        
         normalized_likelihoods = np.zeros(N, dtype=np.float64)
         normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=radius)
 
@@ -335,18 +335,18 @@ if __name__ == "__main__":
     import time
     site = 'box_canyon'
 
-    flag = False  # True: project semantics from one image to the point cloud.
+    flag = True  # True: project semantics from one image to the point cloud.
     batch_flag = False  # True: save the associations of all images in sequence.
-    Parallel_batch_flag = True # True: save the associations of all images in parallel.
-    keyimage_flag = True
+    Parallel_batch_flag = False # True: save the associations of all images in parallel.
+    keyimage_flag = False  # True: build associations_keyimage.npy
 
     if flag:
         if site == 'box_canyon':
             # segment the images
-            image_segmentor = ImageSegmentation(sam_params)        
-            image_path = '../../data/mission_2/DJI_0246.JPG'
-            masks = image_segmentor.predict(image_path)
-            image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
+            #image_segmentor = ImageSegmentation(sam_params)        
+            #image_path = '../../data/mission_2/DJI_0246.JPG'
+            #masks = image_segmentor.predict(image_path)
+            #image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
 
             # project the point cloud
             pointcloud_projector = PointcloudProjection()
