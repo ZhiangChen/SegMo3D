@@ -5,30 +5,31 @@ import concurrent.futures
 
 # association on all points
 @jit(nopython=True)
-def update_image_and_associations(image, z_buffer, points, colors, height, width):
-    pixel_table = np.full((height, width), -1, dtype=np.int32)
+def update_image_and_associations(image, z_buffer, points, colors, height, width, segmentation):
+    pixel2point = np.full((height, width), -1, dtype=np.int32)
 
-    for i in range(points.shape[0]):
+    N_points = points.shape[0]
+
+    for i in range(N_points):
         x, y, z = points[i]
         color = colors[i]
         px, py = int(x), int(y)
 
         if 0 <= px < width and 0 <= py < height:
-            if z < z_buffer[py, px]:
-                z_buffer[py, px] = z
-                pixel_table[py, px] = i
-                image[py, px] = color
+            # skip if the point in the segmentation is -1
+            if segmentation[py, px] != -1:
+                if z < z_buffer[py, px]:
+                    z_buffer[py, px] = z
+                    pixel2point[py, px] = i
+                    image[py, px] = color
 
     # get the pixel of valid associations
-    y_indices, x_indices = np.where(pixel_table != -1)
-    associations = np.empty((len(y_indices), 3), dtype=np.int32)
-    for idx in range(len(y_indices)):
-        associations[idx, 0] = x_indices[idx]
-        associations[idx, 1] = y_indices[idx]
-        associations[idx, 2] = pixel_table[y_indices[idx], x_indices[idx]]
+    u_indices, v_indices = np.where(pixel2point != -1)
+    point2pixel = np.full((N_points, 2), -1, dtype=np.int16)
+    for idx in range(len(u_indices)):
+        point2pixel[pixel2point[u_indices[idx], v_indices[idx]]] = np.array([u_indices[idx], v_indices[idx]])
 
-    return image, z_buffer, associations
-
+    return image, z_buffer, pixel2point, point2pixel
 
 
 @jit(nopython=True)
@@ -47,11 +48,13 @@ def inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelih
         normalized_likelihoods (np.array): A 1D array of shape (N,) where N is the number of semantic classes. The index is the semantic 
             id and the value is the normalized likelihood. 
     """
-
+    # reset normalized_likelihoods
+    normalized_likelihoods[:] = 0
+    
     # Extract semantic ids and corresponding likelihoods
     for i in range(-radius, radius + 1):
         for j in range(-radius, radius + 1):
-            semantic_id = padded_segmentation[v + j + radius, u + i + radius]
+            semantic_id = padded_segmentation[u + j + radius, v + i + radius]
             if semantic_id != -1:
                 normalized_likelihoods[int(semantic_id)] += likelihoods[int((i + radius) * (2 * radius + 1) + (j + radius))]
 
@@ -84,12 +87,10 @@ def compute_gaussian_likelihood(radius, decaying):
 
 
 @jit(nopython=True)
-def add_color_to_points(associations, colors, segmentation, image_height, image_width, radius=2, decaying=2):
+def add_color_to_points(point2pixel, colors, segmentation, image_height, image_width, radius=2, decaying=2):
     """
     Arguments:
-        associations (np.array): A 2D array of shape (N, 3) where N is the number of valid points. For each point, 
-            the first two elements are the u, v coordinate of the point in the image and the third element is the 
-            index of the point in the original points array. u is the axis of width and v is the axis of height.
+        point2pixel (np.array): A 2D array of shape (N, 2) where N is the number of points. Each row is (u, v). 
         colors (np.array): A 2D array of shape (N, 3) where N is the number of points.
         segmentation (np.array): The segmentation image.
         image_height (int): The height of the original image.
@@ -113,8 +114,12 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
 
     # Count the number of points for each semantic class
     #point_count = np.zeros(N, dtype=np.int64)
-    for i in range(associations.shape[0]):
-        u, v, point_index = associations[i]
+    #for i in range(associations.shape[0]):
+    for point_index in range(point2pixel.shape[0]):
+        u, v = point2pixel[point_index]
+        if u == -1 or v == -1:
+            continue
+        
         normalized_likelihoods = np.zeros(N, dtype=np.float64)
         normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius=radius)
 
@@ -125,8 +130,6 @@ def add_color_to_points(associations, colors, segmentation, image_height, image_
     
     #print('Point count: ', point_count)
     return colors
-
-
 
 class PointcloudProjection(object):
     """
@@ -165,7 +168,14 @@ class PointcloudProjection(object):
         assert os.path.exists(segmentation_path), 'Segmentation path does not exist.'
         self.segmentation = np.load(segmentation_path)  # for adding color to points
 
-
+    def read_segmentations(self, segmentations_folder_path):
+        """
+        Arguments:
+            segmentations_folder_path (str): Path to the folder containing the segmentation files.
+        """
+        assert os.path.exists(segmentations_folder_path), 'Segmentations folder path does not exist.'
+        self.segmentations_path = [os.path.join(segmentations_folder_path, f) for f in os.listdir(segmentations_folder_path) if f.endswith('.npy')]
+        
     def project(self, frame_key):
         """
         Arguments:
@@ -199,42 +209,70 @@ class PointcloudProjection(object):
         image = np.zeros((image_height, image_width, 3), dtype=np.uint8)
         z_buffer = np.full((image_height, image_width), np.inf)
 
-        # Update image and get associations
-        image, z_buffer, associations  = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
+        # read segmentation using frame_key
+        segmentation_path = [f for f in self.segmentations_path if frame_key[:-4] in f][0]
+        segmentation = np.load(segmentation_path)
 
-        return image, associations
+        # Update image and get associations
+        image, z_buffer, pixel2point, point2pixel   = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width, segmentation)
+
+        return image, pixel2point, point2pixel 
     
     def batch_project(self, frame_keys, save_folder_path):
         """
         Arguments:
-            frame_keys (list): A list of frame keys.
+            frame_keys (list): A list of frame keys. 
             save_folder_path (str): The path to save the images.
         """
         if not os.path.exists(save_folder_path):
             os.makedirs(save_folder_path)
 
+        pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
+        if not os.path.exists(pixel2point_folder_path):
+            os.makedirs(pixel2point_folder_path)
+
+        point2pixel_folder_path = os.path.join(save_folder_path, 'point2pixel')
+        if not os.path.exists(point2pixel_folder_path):
+            os.makedirs(point2pixel_folder_path)
+
         total = len(frame_keys)
         for i, frame_key in enumerate(frame_keys):
             print('Processing {}/{}: {}'.format(i+1, total, frame_key))
             t1 = time.time()
-            image, associations = self.project(frame_key)
+            image, pixel2point, point2pixel = self.project(frame_key)
             t2 = time.time()
             print('Time for projection: ', t2 - t1)
 
-            associations_path = os.path.join(save_folder_path, frame_key[:-4] + '.npy')
-            # save associations as npy
-            np.save(associations_path, associations)
+            # save pixel2point as npy
+            pixel2point_path = os.path.join(pixel2point_folder_path, frame_key[:-4] + '.npy')
+            np.save(pixel2point_path, pixel2point)
+            # save point2pixel as npy
+            point2pixel_path = os.path.join(point2pixel_folder_path, frame_key[:-4] + '.npy')
+            np.save(point2pixel_path, point2pixel)
 
     def process_frame(self, frame_key, save_folder_path):
         print('Processing: {}'.format(frame_key))
         t1 = time.time()
-        image, associations = self.project(frame_key)
+        image, pixel2point, point2pixel = self.project(frame_key)
         t2 = time.time()
         print('Time for projection: ', t2 - t1)
 
-        associations_path = os.path.join(save_folder_path, frame_key[:-4] + '.npy')
-        # save associations as npy
-        np.save(associations_path, associations)
+        pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
+        if not os.path.exists(pixel2point_folder_path):
+            os.makedirs(pixel2point_folder_path)
+
+        point2pixel_folder_path = os.path.join(save_folder_path, 'point2pixel')
+        if not os.path.exists(point2pixel_folder_path):
+            os.makedirs(point2pixel_folder_path)
+
+        # save pixel2point as npy
+        pixel2point_path = os.path.join(pixel2point_folder_path, frame_key[:-4] + '.npy')
+        np.save(pixel2point_path, pixel2point)
+        # save point2pixel as npy
+        point2pixel_path = os.path.join(point2pixel_folder_path, frame_key[:-4] + '.npy')
+        np.save(point2pixel_path, point2pixel)
+
+        return point2pixel
 
     def parallel_batch_project(self, frame_keys, save_folder_path, num_workers=8):
         """
@@ -264,52 +302,84 @@ class PointcloudProjection(object):
             finally:
                 print("Executor shut down.")
 
+    def build_associations_keyimage(self, read_folder_path):
+        """
+        Arguments:
+            read_folder_path (str): The path to the folder containing the point2pixel files.
+        """
+        point2pixel_folder_path = os.path.join(read_folder_path, 'point2pixel')
+        assert os.path.exists(point2pixel_folder_path), 'Point2pixel folder path does not exist.'
+
+        point2pixel_file_paths = [os.path.join(point2pixel_folder_path, f) for f in os.listdir(point2pixel_folder_path) if f.endswith('.npy')]
+        point2pixel_file_paths.sort()
+
+        N_images = len(point2pixel_file_paths)
+
+        point2pixel = np.load(point2pixel_file_paths[0])
+        N_points = point2pixel.shape[0]
+
+        # build associations
+        associations_keyimage = np.full((N_points, N_images), False, dtype=bool)
+
+        for i in range(len(point2pixel_file_paths)):
+            point2pixel = np.load(point2pixel_file_paths[i])
+            associations_keyimage[ point2pixel[:, 0]!=-1,  i] = True
+
+        # save associations
+        save_file_path = os.path.join(read_folder_path, 'associations_keyimage.npy')
+        np.save(save_file_path, associations_keyimage)
+
 
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    site = 'courtwright'
+    site = 'box_canyon'
 
-    flag = False  # True: project semantics from one image to the point cloud.
+    flag = True  # True: project semantics from one image to the point cloud.
+    batch_flag = False  # True: save the associations of all images in sequence.
+    Parallel_batch_flag = False # True: save the associations of all images in parallel.
+    keyimage_flag = False  # True: build associations_keyimage.npy
+
     if flag:
         if site == 'box_canyon':
             # segment the images
-            image_segmentor = ImageSegmentation(sam_params)        
-            image_path = '../../data/mission_2/DJI_0246.JPG'
-            masks = image_segmentor.predict(image_path)
-            image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
+            #image_segmentor = ImageSegmentation(sam_params)        
+            #image_path = '../../data/mission_2/DJI_0246.JPG'
+            #masks = image_segmentor.predict(image_path)
+            #image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
 
             # project the point cloud
             pointcloud_projector = PointcloudProjection()
             pointcloud_projector.read_pointcloud('../../data/model.las')
             pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+            pointcloud_projector.read_segmentations('../../data/mission_2_segmentations')
             pointcloud_projector.read_segmentation('../../data/DJI_0246.npy')
-            image, associations = pointcloud_projector.project('DJI_0246.JPG')
+            image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0246.JPG')
 
             # add color to points
             t1 = time.time()
             radius = 0
             decaying = 2
-            colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+            colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
             t2 = time.time()
             print('Time for adding colors: ', t2 - t1)
 
             write_las(pointcloud_projector.points, colors, "../../data/test.las")
 
         elif site == 'courtwright':
-
             # project the point cloud
             pointcloud_projector = PointcloudProjection()
             pointcloud_projector.read_pointcloud('../../data/courtwright/courtwright.las')
             pointcloud_projector.read_camera_parameters('../../data/courtwright/cameras.json', '../../data/courtwright/shots.geojson')
+            pointcloud_projector.read_segmentations('../../data/courtwright/segmentations')
             pointcloud_projector.read_segmentation('../../data/courtwright/segmentations/DJI_0590.npy')
-            image, associations = pointcloud_projector.project('DJI_0590.JPG')
+            image, pixel2point, point2pixel  = pointcloud_projector.project('DJI_0590.JPG')
 
             # add color to points
             t1 = time.time()
             radius = 0
             decaying = 2
-            colors = add_color_to_points(associations, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+            colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
             t2 = time.time()
             print('Time for adding colors: ', t2 - t1)
 
@@ -318,16 +388,17 @@ if __name__ == "__main__":
     else:
         pass
 
-    batch_flag = False  # True: save the associations of all images.
+
     if batch_flag:
         # project the point cloud
         pointcloud_projector = PointcloudProjection()
         pointcloud_projector.read_pointcloud('../../data/model.las')
         pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+        pointcloud_projector.read_segmentations('../../data/mission_2_segmentations')
 
         # batch project
         image_folder_path = '../../data/mission_2'
-        save_folder_path = '../../data/mission_2_associations'
+        save_folder_path = '../../data/mission_2_associations_'
 
         image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
         pointcloud_projector.batch_project(image_list, save_folder_path)
@@ -335,13 +406,14 @@ if __name__ == "__main__":
     else:
         pass
 
-    Parallel_batch_flag = True
+
     if Parallel_batch_flag:
         if site == 'box_canyon':
             # project the point cloud
             pointcloud_projector = PointcloudProjection()
             pointcloud_projector.read_pointcloud('../../data/model.las')
             pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+            pointcloud_projector.read_segmentations('../../data/mission_2_segmentations')
 
             # batch project
             image_folder_path = '../../data/mission_2'
@@ -355,6 +427,7 @@ if __name__ == "__main__":
             pointcloud_projector = PointcloudProjection()
             pointcloud_projector.read_pointcloud('../../data/courtwright/courtwright.las')
             pointcloud_projector.read_camera_parameters('../../data/courtwright/cameras.json', '../../data/courtwright/shots.geojson')
+            pointcloud_projector.read_segmentations('../../data/courtwright/segmentations')
 
             # batch project
             image_folder_path = '../../data/courtwright/photos'
@@ -365,3 +438,10 @@ if __name__ == "__main__":
 
     else:
         pass
+
+    if keyimage_flag:
+        pointcloud_projector = PointcloudProjection()
+        t1 = time.time()
+        pointcloud_projector.build_associations_keyimage('../../data/mission_2_associations_parallel')
+        t2 = time.time()
+        print('Time for building associations: ', t2 - t1)

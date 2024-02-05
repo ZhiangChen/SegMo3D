@@ -65,7 +65,7 @@ Here are several important steps to find correct camera extrinsic matrix:
 
 5. Check if the `x-y` center of the transformed point cloud is close to the center of the image (Display->show cursor coordinates). If not, the rotation matrix may need to be transposed. 
 
-# Camera intrinsic matrix
+## Camera intrinsic matrix
 In WebODM, the camera intrinsic matrix can be calculated from .json file. `c_x` and `c_y` in the .json file represents the normalized offsets from the image center. To get the correct $c_x$ and $c_y$ in pixel coordinates,
 
 $c_x = width/2 + c\_x*width$  
@@ -89,4 +89,13 @@ Debugging intrinsic matrix can be cumbersome. Here are several important steps t
 3. Exam the projected image. Resize the image if the orignal size is too large. The projected image may contain many black pixels because the original point cloud is sparser than image pixels. Nearest interpolation can be used to fill the black pixels. Details can be found in the tutorial [Jupyter Notebook](../semantic_SfM/ssfm/projection.ipynb). 
 
 
- 
+## N-d array and coordinates
+```
+>>> a = np.arange(15).reshape(3,5)
+>>> a
+array([[ 0,  1,  2,  3,  4],
+       [ 5,  6,  7,  8,  9],
+       [10, 11, 12, 13, 14]])
+>>> a[1,3]
+8
+```
