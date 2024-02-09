@@ -25,6 +25,9 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path):
     points, colors = read_las_file(pointcloud_path)
     semantics = np.load(semantics_path)
 
+    print('maximum of semantics: ', semantics.max())
+    print('number of unique semantics: ', len(np.unique(semantics)))
+
     # construct a .las file
     hdr = laspy.LasHeader(version="1.2", point_format=3)
     hdr.scale = [0.0001, 0.0001, 0.0001]  # Example scale factor, adjust as needed
@@ -124,6 +127,8 @@ def numba_update_pc_segmentation(associations1_point2pixel, segmented_objects_im
         u,v = associations1_point2pixel[point_id]
         if u != -1:
             object_id = segmented_objects_image1[u, v]
+            if object_id == -1:
+                continue
             normalized_likelihoods = inquire_semantics(u, v, padded_segmentation, normalized_likelihoods, likelihoods, radius)
             
             # construct an array where the first column is the object id and the second column is the normalized object probability
@@ -405,7 +410,7 @@ class ObjectRegistration(object):
         unique_ids, counts = np.unique(object_ids_object1_image2, return_counts=True)
         max_count_id = unique_ids[np.argmax(counts)]
         pixel_object2_image2 = np.argwhere(segmented_objects_image2 == max_count_id)
-        return pixel_object2_image2
+        return max_count_id, pixel_object2_image2
     
     def calculate_3D_IoU(self, point_object1_image2, point_object2_image1):
         """
@@ -448,9 +453,9 @@ class ObjectRegistration(object):
         self.pc_segmentation_probs = np.zeros((self.N_points, self.M_segmentation_ids), dtype=np.float32)
 
         for image_id in range(N_images):
-            # logging the current and total number images
-            logger.info(f'Processing image {image_id+1}/{N_images}')
-            print(f'Processing image {image_id+1}/{N_images}')
+            # logging the current, total number images, and image name
+            logger.info(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')
+            print(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')    
 
             t1 =   time.time()
             # load segmentation and association files
@@ -465,6 +470,9 @@ class ObjectRegistration(object):
             self.segmented_objects_images.append(segmented_objects_image1)
             self.associations_pixel2point.append(associations1_pixel2point)
             self.associations_point2pixel.append(associations1_point2pixel)
+
+            # create a segmentation mask for segmentation_objects_image1 with boolean data type, where True indicates the object id is not -1
+            #segmentation_mask1 = segmented_objects_image1 != -1
 
             # pre-compute padded segmentation and normalized likelihoods
             image_height, image_width = segmented_objects_image1.shape
@@ -481,6 +489,8 @@ class ObjectRegistration(object):
                 pixel_object1_image1_bool = segmented_objects_image1 == object_id
                 
                 point_object1_image1 = associations1_pixel2point[pixel_object1_image1_bool] # point_object1_image1 is a list of point ids
+                # remove -1 from point_object1_image1
+                point_object1_image1 = point_object1_image1[point_object1_image1 != -1]
                 point_object1_image1_bool = np.zeros(self.N_points, dtype=bool)
                 point_object1_image1_bool[point_object1_image1] = True
 
@@ -512,14 +522,17 @@ class ObjectRegistration(object):
                         pixel_object1_image2 = pixel_object1_image2[pixel_object1_image2[:, 0] != -1]
                         point_object1_image2 = associations2_pixel2point[pixel_object1_image2[:, 0], pixel_object1_image2[:, 1]]  # point_object1_image2 is a list of point ids
 
-                        pixel_object2_image2 = self.search_object2(key_image, pixel_object1_image2)
+                        object2_id_image2, pixel_object2_image2 = self.search_object2(key_image, pixel_object1_image2)
 
                         point_object2_image2 = associations2_pixel2point[pixel_object2_image2[:, 0], pixel_object2_image2[:, 1]]  # point_object2_image2 is a list of point ids
+                        point_object2_image2 = point_object2_image2[point_object2_image2 != -1]
                         pixel_object2_image1 = associations1_point2pixel[point_object2_image2]
                         pixel_object2_image1 = pixel_object2_image1[pixel_object2_image1[:, 0] != -1]
                         point_object2_image1 = associations1_pixel2point[pixel_object2_image1[:, 0], pixel_object2_image1[:, 1]]
 
                         iou = self.calculate_3D_IoU(point_object1_image2, point_object2_image1)
+
+                        logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
 
                         if iou >= iou_threshold:
                             self.update_object_manager(object_id, point_object2_image2)
@@ -529,6 +542,9 @@ class ObjectRegistration(object):
             t3 = time.time()
             logger.info("    time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
             #print("time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
+
+            # logging self.object_manager
+            logger.info('    object_manager: {}'.format(self.object_manager))
 
             self.update_pc_segmentation(associations1_point2pixel, segmented_objects_image1)
             t4 = time.time()
@@ -547,6 +563,8 @@ class ObjectRegistration(object):
                 save_semantics_path = os.path.join(semantics_folder_path, 'semantics_{}.npy'.format(image_id))
                 self.save_semantics(save_semantics_path)
 
+                save_las_path = os.path.join(self.association_folder_path, 'semantics', 'semantics_{}.las'.format(image_id))
+                add_semantics_to_pointcloud(self.pointcloud_path, save_semantics_path, save_las_path)   
                     
 
 if __name__ == "__main__":
@@ -557,7 +575,7 @@ if __name__ == "__main__":
     association_folder_path = '../../data/mission_2_associations_parallel'
 
     object_registration_flag = True
-    add_semantics_to_pointcloud_flag = True
+    add_semantics_to_pointcloud_flag = False
     if object_registration_flag:
         #now we will Create and configure logger 
         logging.basicConfig(filename="std_test.log", 
@@ -578,12 +596,13 @@ if __name__ == "__main__":
         print('Time elapsed for creating object registration: {}'.format(t2-t1))
 
         # Run object registration
-        obr.object_registration(save_semantics=True)
+        obr.object_registration(iou_threshold=0.5, save_semantics=True)
+        #obr.object_registration(iou_threshold=0.5)
 
     if add_semantics_to_pointcloud_flag:
 
         # Add semantics to the point cloud
-        image_id = 18
+        image_id = 50
         semantics_folder_path = os.path.join(association_folder_path, 'semantics', 'semantics_{}.npy'.format(image_id))
         save_las_path = os.path.join(association_folder_path, 'semantics', 'semantics_{}.las'.format(image_id))
         add_semantics_to_pointcloud(pointcloud_path, semantics_folder_path, save_las_path)   

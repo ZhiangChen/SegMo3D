@@ -108,7 +108,7 @@ class ImageSegmentation(object):
         self.image = image.copy()
         return masks
     
-    def batch_predict(self, image_paths, save_folder_path, maxium_size=1000):
+    def batch_predict(self, image_paths, save_folder_path, maxium_size=1000, save_overlap=False):
         """
         Arguments:
             image_paths (list): A list of image paths.
@@ -126,6 +126,9 @@ class ImageSegmentation(object):
             masks = self.predict(image_path, maxium_size)
             save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '.npy')
             self.save_npy(masks, save_path)
+            if save_overlap:
+                overlap_save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '_overlap.png')
+                self.save_overlap(self.image, masks, overlap_save_path)
 
     def save_overlap(self, image, masks, save_path):
         """
@@ -195,7 +198,11 @@ sam_params['pred_iou_thresh'] = 0.96
 sam_params['stability_score_thresh'] = 0.92
 
 if __name__ == '__main__':
+    site = "box_canyon" # "box_canyon" or "courtwright
     single_test = False
+    batch_test = True
+    write_segmentation_test = False
+
     if single_test:
         image_segmentor = ImageSegmentation(sam_params)        
         image_path = '../../data/mission_2/DJI_0247.JPG'
@@ -203,15 +210,14 @@ if __name__ == '__main__':
         image_segmentor.save_overlap(image_segmentor.image, masks, './test.png')
         image_segmentor.save_npy(masks, './test.npy')
 
-    batch_test = True
+    
     if batch_test:
-        site = "courtwright"
         if site == "box_canyon":
             image_segmentor = ImageSegmentation(sam_params)   
             image_folder_path = '../../data/mission_2'
             segmentation_folder_path = '../../data/mission_2_segmentations'
             image_paths = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
-            image_segmentor.batch_predict(image_paths, segmentation_folder_path)
+            image_segmentor.batch_predict(image_paths, segmentation_folder_path, save_overlap=True)
         elif site == "courtwright":
             image_segmentor = ImageSegmentation(sam_params)   
             image_folder_path = '../../data/courtwright/photos'
@@ -219,7 +225,7 @@ if __name__ == '__main__':
             image_paths = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
             image_segmentor.batch_predict(image_paths, segmentation_folder_path)
 
-    write_segmentation_test = False
+    
     if write_segmentation_test:
         segmentation_path = '../../data/mission_2_segmentations/DJI_0183.npy'
         save_path = '../../data/DJI_0183_overlap.png'

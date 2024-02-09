@@ -5,7 +5,7 @@ import concurrent.futures
 
 # association on all points
 @jit(nopython=True)
-def update_image_and_associations(image, z_buffer, points, colors, height, width, segmentation):
+def update_image_and_associations(image, z_buffer, points, colors, height, width):
     pixel2point = np.full((height, width), -1, dtype=np.int32)
 
     N_points = points.shape[0]
@@ -16,12 +16,10 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
         px, py = int(x), int(y)
 
         if 0 <= px < width and 0 <= py < height:
-            # skip if the point in the segmentation is -1
-            if segmentation[py, px] != -1:
-                if z < z_buffer[py, px]:
-                    z_buffer[py, px] = z
-                    pixel2point[py, px] = i
-                    image[py, px] = color
+            if z < z_buffer[py, px]:
+                z_buffer[py, px] = z
+                pixel2point[py, px] = i
+                image[py, px] = color
 
     # get the pixel of valid associations
     u_indices, v_indices = np.where(pixel2point != -1)
@@ -167,15 +165,7 @@ class PointcloudProjection(object):
         """
         assert os.path.exists(segmentation_path), 'Segmentation path does not exist.'
         self.segmentation = np.load(segmentation_path)  # for adding color to points
-
-    def read_segmentations(self, segmentations_folder_path):
-        """
-        Arguments:
-            segmentations_folder_path (str): Path to the folder containing the segmentation files.
-        """
-        assert os.path.exists(segmentations_folder_path), 'Segmentations folder path does not exist.'
-        self.segmentations_path = [os.path.join(segmentations_folder_path, f) for f in os.listdir(segmentations_folder_path) if f.endswith('.npy')]
-        
+   
     def project(self, frame_key):
         """
         Arguments:
@@ -209,12 +199,9 @@ class PointcloudProjection(object):
         image = np.zeros((image_height, image_width, 3), dtype=np.uint8)
         z_buffer = np.full((image_height, image_width), np.inf)
 
-        # read segmentation using frame_key
-        segmentation_path = [f for f in self.segmentations_path if frame_key[:-4] in f][0]
-        segmentation = np.load(segmentation_path)
 
         # Update image and get associations
-        image, z_buffer, pixel2point, point2pixel   = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width, segmentation)
+        image, z_buffer, pixel2point, point2pixel   = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
 
         return image, pixel2point, point2pixel 
     
@@ -302,28 +289,49 @@ class PointcloudProjection(object):
             finally:
                 print("Executor shut down.")
 
-    def build_associations_keyimage(self, read_folder_path):
+    def build_associations_keyimage(self, read_folder_path, segmentation_folder_path):
         """
         Arguments:
             read_folder_path (str): The path to the folder containing the point2pixel files.
+            pixel2point_folder_path (str): The path to the folder containing the pixel2point files.
+            segmentation_folder_path (str): The path to the folder containing the segmentation files.
         """
-        point2pixel_folder_path = os.path.join(read_folder_path, 'point2pixel')
-        assert os.path.exists(point2pixel_folder_path), 'Point2pixel folder path does not exist.'
-
-        point2pixel_file_paths = [os.path.join(point2pixel_folder_path, f) for f in os.listdir(point2pixel_folder_path) if f.endswith('.npy')]
-        point2pixel_file_paths.sort()
-
-        N_images = len(point2pixel_file_paths)
-
+        pixel2point_folder_path = os.path.join(read_folder_path, 'pixel2point')
+        assert os.path.exists(pixel2point_folder_path), 'Pixel2point folder path does not exist.'
+        pixel2point_file_paths = [os.path.join(pixel2point_folder_path, f) for f in os.listdir(pixel2point_folder_path) if f.endswith('.npy')]
+        pixel2point_file_paths.sort()
+        N_images = len(pixel2point_file_paths)
+        
+        # get the number of points
+        point2pixel_folder_path = os.path.join(read_folder_path, 'point2pixel')  
+        assert os.path.exists(point2pixel_folder_path), 'Point2pixel folder path does not exist.'  
+        point2pixel_file_paths = [os.path.join(point2pixel_folder_path, f) for f in os.listdir(point2pixel_folder_path) if f.endswith('.npy')]  
         point2pixel = np.load(point2pixel_file_paths[0])
         N_points = point2pixel.shape[0]
 
+        assert os.path.exists(segmentation_folder_path), 'Segmentation folder path does not exist.'
+        segmentation_file_paths = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if f.endswith('.npy')]
+        segmentation_file_paths.sort()
+
+        # check if the number of images is the same
+        assert len(segmentation_file_paths) == N_images, 'The number of images is not the same as the number of segmentation files.'
+        segmentation_pixel2point_pairs = []
+        for i in range(len(segmentation_file_paths)):
+            segmentation_file_path = segmentation_file_paths[i]
+            pixel2point_file_path = pixel2point_file_paths[i]
+            # check if the base of the file name is the same
+            assert os.path.basename(segmentation_file_path)[:-4] == os.path.basename(pixel2point_file_path)[:-4], 'The base of the file name is not the same.'
+            segmentation_pixel2point_pairs.append((segmentation_file_path, pixel2point_file_path))
+        
         # build associations
         associations_keyimage = np.full((N_points, N_images), False, dtype=bool)
 
         for i in range(len(point2pixel_file_paths)):
-            point2pixel = np.load(point2pixel_file_paths[i])
-            associations_keyimage[ point2pixel[:, 0]!=-1,  i] = True
+            segmentation = np.load(segmentation_pixel2point_pairs[i][0])
+            pixel2point = np.load(segmentation_pixel2point_pairs[i][1])
+            pixel2point[segmentation == -1] = -1
+            valid_point_ids = pixel2point[pixel2point != -1]
+            associations_keyimage[valid_point_ids, i] = True
 
         # save associations
         save_file_path = os.path.join(read_folder_path, 'associations_keyimage.npy')
@@ -335,10 +343,10 @@ if __name__ == "__main__":
     import time
     site = 'box_canyon'
 
-    flag = True  # True: project semantics from one image to the point cloud.
+    flag = False  # True: project semantics from one image to the point cloud.
     batch_flag = False  # True: save the associations of all images in sequence.
     Parallel_batch_flag = False # True: save the associations of all images in parallel.
-    keyimage_flag = False  # True: build associations_keyimage.npy
+    keyimage_flag = True  # True: build associations_keyimage.npy
 
     if flag:
         if site == 'box_canyon':
@@ -352,7 +360,6 @@ if __name__ == "__main__":
             pointcloud_projector = PointcloudProjection()
             pointcloud_projector.read_pointcloud('../../data/model.las')
             pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
-            pointcloud_projector.read_segmentations('../../data/mission_2_segmentations')
             pointcloud_projector.read_segmentation('../../data/DJI_0246.npy')
             image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0246.JPG')
 
@@ -371,7 +378,6 @@ if __name__ == "__main__":
             pointcloud_projector = PointcloudProjection()
             pointcloud_projector.read_pointcloud('../../data/courtwright/courtwright.las')
             pointcloud_projector.read_camera_parameters('../../data/courtwright/cameras.json', '../../data/courtwright/shots.geojson')
-            pointcloud_projector.read_segmentations('../../data/courtwright/segmentations')
             pointcloud_projector.read_segmentation('../../data/courtwright/segmentations/DJI_0590.npy')
             image, pixel2point, point2pixel  = pointcloud_projector.project('DJI_0590.JPG')
 
@@ -394,7 +400,6 @@ if __name__ == "__main__":
         pointcloud_projector = PointcloudProjection()
         pointcloud_projector.read_pointcloud('../../data/model.las')
         pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
-        pointcloud_projector.read_segmentations('../../data/mission_2_segmentations')
 
         # batch project
         image_folder_path = '../../data/mission_2'
@@ -413,7 +418,6 @@ if __name__ == "__main__":
             pointcloud_projector = PointcloudProjection()
             pointcloud_projector.read_pointcloud('../../data/model.las')
             pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
-            pointcloud_projector.read_segmentations('../../data/mission_2_segmentations')
 
             # batch project
             image_folder_path = '../../data/mission_2'
@@ -427,7 +431,6 @@ if __name__ == "__main__":
             pointcloud_projector = PointcloudProjection()
             pointcloud_projector.read_pointcloud('../../data/courtwright/courtwright.las')
             pointcloud_projector.read_camera_parameters('../../data/courtwright/cameras.json', '../../data/courtwright/shots.geojson')
-            pointcloud_projector.read_segmentations('../../data/courtwright/segmentations')
 
             # batch project
             image_folder_path = '../../data/courtwright/photos'
@@ -442,6 +445,6 @@ if __name__ == "__main__":
     if keyimage_flag:
         pointcloud_projector = PointcloudProjection()
         t1 = time.time()
-        pointcloud_projector.build_associations_keyimage('../../data/mission_2_associations_parallel')
+        pointcloud_projector.build_associations_keyimage('../../data/mission_2_associations_parallel', '../../data/mission_2_segmentations')
         t2 = time.time()
         print('Time for building associations: ', t2 - t1)
