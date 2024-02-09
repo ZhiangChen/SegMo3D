@@ -596,8 +596,8 @@ if __name__ == "__main__":
         print('Time elapsed for creating object registration: {}'.format(t2-t1))
 
         # Run object registration
-        obr.object_registration(iou_threshold=0.5, save_semantics=True)
-        #obr.object_registration(iou_threshold=0.5)
+        #obr.object_registration(iou_threshold=0.5, save_semantics=True)
+        obr.object_registration(iou_threshold=0.5)
 
     if add_semantics_to_pointcloud_flag:
 
