@@ -201,7 +201,7 @@ if __name__ == '__main__':
     site = "box_canyon" # "box_canyon" or "courtwright
     single_test = False
     batch_test = True
-    write_segmentation_test = False
+    write_segmentation_test = False  
 
     if single_test:
         image_segmentor = ImageSegmentation(sam_params)        

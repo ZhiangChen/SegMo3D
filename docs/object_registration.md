@@ -8,27 +8,38 @@ $intersection = Points(T_2O_1) \cap Points(T_1O_2) $,
 
 $union = Points(T_2O_1) \cup Points(T_1O_2) $.
 
-Designing data structures and algorithms is important to improve the efficiency of the object registration. For example, there are several computational challenges. First, exhaustively comparing any two objects is time-consuming, with a time complexity of $O(NM)$, where $N$ represents the number of registered images and $M$ denotes the maximum number of objects in any image. Second, because of the large of points, we want to avoid algorithms that have time complexity worse than $O(N log N)$. Ideally, we want the algorithms with constant time complexity. Third, if time-consuming algorithms cannot be avoided, we prefer parallel processing and preprocessing. Fourth, we need to design an efficient to method to calculate the IoU for 3D points.  
+We have designed data structures and algorithms to improve the efficiency of the object registration. 
 
 ## Data Structures
 
-### 1. Point-pixel association
-For each image, the point-pixel association is represented by a 2D array of shape (N, 3), where N is the number of valid points that are projected onto an image. For each point(u, v, point_index), the first two elements are the u, v coordinate of the point in the image and the third element is the index of the point in the original points array. u is the axis of width and v is the axis of height.
+### 1. Segmentation
+Before object registration, images are segmented to create 2D masks with the same dimension as the images. In each mask, value -1 indicates that the corresponding pixel is not classified. Classified pixels have values ranging from 0 to N. 
 
-The point-pixel association is precomputed in parallel processing, as implemented by `ssfm.probabilistic_projection.parallel_batch_projection`. 
+### 2. Point2pixel association
+For each image, the point-pixel association is represented by a 2D array with shape (N, 2), where N is the number of points in the point cloud. A pixel (u, v) is indexed by an integer i. u is the axis of height and v is the axis of width. If a point does not associate with any pixels, its corresponding pixel coordinates are (-1, -1). 
 
-### 2. Point-image association
-The point-image association, `ObjectRegistration.association_p2i`, is a dictionary where the key is the point index and the value is a list of images that include the projection of the point. 
+The point2pixel association is precomputed in parallel processing, as implemented by `ssfm.probabilistic_projection.parallel_batch_projection`. 
 
+The point2pixel association is implemented by a camera projection with a depth filter. Segmentation is not considered in the point2pixel association.
 
-### 3. Image segmentation
-The image segmentation, `ObjectRegistration.segmented_objects_image1`, is a 2D array with the same size as the image. Each pixel in the array is the index of the mask that the pixel belongs to. The valid index starts from 0. If the pixel does not belong to any mask, the value is -1.
-        
+### 3. Pixel2point association
+A pixel2point association is a 2D array with shape (H, W), where H is the image height and W is image width. If a pixel does not associate with any points, its corresponding value is -1. Otherwise, the corresponding value in the pixel represents the point index. 
 
-### 4. Pointcloud segmentation
-The pointcloud segmentation, `ObjectRegistration.pc_segmentation`, is a dictionary where the key is the point index and the value is a 2D array representing normalized object probabilities. The first column in the 2D array denotes the object index; the second column represents normalized probabilities. 
+The pixel2point association is precomputed in parallel processing, as implemented by `ssfm.probabilistic_projection.parallel_batch_projection`. 
 
-### 5. Object manager
+The pixel2point association is implemented by a camera projection with a depth filter. Segmentation is not considered in the pixel2point association.
+
+### 4. keyimage association
+The keyimage association is a 2D boolean array with shape (N, M), where N is the number of images and M is the number of total points in the point cloud. In each row, points with valid point-pixel associations and segmentation have values of True. 
+
+The keyimage association is precomputed in `ssfm.probabilistic_projection.build_associations_keyimage`.
+
+In `ssfm.object_registration.object_registration`, when registering a new object, K number of key images are selected from registered image candidates with the largest number of True values within the masks of the object.
+
+### 5. Probabilistic segmented point cloud
+We use two 2D arrays to represent a probabilistic segmented point cloud, `pc_segmentation_ids` and `pc_segmentation_probs`, both with the shape of (N, M), where N is the number of points in the point cloud and M is a pre-defined number to indicate the largest number of unique segmentation ids for each point. For example, if M is 5, each point has at most 5 unique segmentation ids associated with that point. `pc_segmentation_ids` includes the ids the segmentation ids. `pc_segmentation_probs` includes the likelihood of the corresponding ids. Note that the likelihood are accumulated from many images and not normalized, because if the likelihood are normalized, extra processing is needed to consider the weight of new image with respect to the previous registered ids. 
+
+### 6. Object manager
 *Probabilistic projection* is employed to (1) compensate for camera projection distortion and (2) segmentation errors. Each pixel in image segmentation has a list of probabilistic object ids from the pixel's neighbors. The probability of a neighbor is calculated from a Gaussian decaying function. 
 
 For object registration, if immediately registering an new object by merging or creating a new object, we also need to update the probabilistic object ids for the points from the new object. However, registering a new object immediately on the fly may raise a problem, when the new object includes pixels (usually those pixels at object boundaries) with semantics of new objects that have not been registered. First, we don't know the ids of the unregistered new objects. Second, we don't know if these unregistered new objects will be registered or not, which determines their object ids. Therefore, to address this issue, instead of registering an new object on the fly, we introduce an idea of object manager. 
@@ -42,52 +53,18 @@ During registering each object in a new image, only the object manager will be u
 
 ### 1. Object registration
 ```
-pc_segmentation = initialize_pc_segmentation()  # initialize pointcloud segmentation
-association_p2i = initialize_association_p2i()  # initialize point-image association
-object_manager = initialize_object_manager()  # initialize object manager
-
-M_images = len(segmentations)  # M is the number of images
-for j in range(M_images):
-    segmented_objects_image1 = segmentations[j]
-    N_objects = len(segmented_objects_image1)
-    association1 = associations[j]  # point-pixel association
-    
-    for i in range(N_objects):
-        pixel_object1_image1 = segmented_objects[i]  # pixels of object 1 in image 1
-        points_object1_image1 = get_points_from_pixel(association1, pixel_object1_image1) # points of object 1 from image 1
-        key_images = get_key_images(association_p2i, points_object1_image1)
-        for id_image2 in key_images:
-            association2 = associations[id_image2]
-            inv_association2 = inv(association2)
-            pixel_object1_image2 = association2[points_object1_image1] # pixels of object 1 on image 2
-            points_object1_image2 = inv_association2[pixel_object1_image2] # Point(T_2 O_1)
-
-            segmented_objects_image2 = segmentations[id_image2]
-            pixel_object2_image2 = object2_search(segmented_objects_image2, pixel_object1_image2)
-            points_object2_image2 = get_points_from_pixel(association2, pixel_object2_image2)  # points of object 2 from image 2
-            pixel_object2_image1 = association1[points_object2_image2]
-            points_object2_image1 = get_points_from_pixel(association1, pixel_object2_image1) # Point(T_1 O_2)
-
-            IoU = calculate_IoU(points_object1_image2, points_object2_image1)
-
-            if IoU > threshold:
-                update_object_manager(object_manager, pixel_object1_image1, segmented_objects_image1, points_object2_image2, merge=True)
-            else:
-                update_object_manager(object_manager, pixel_object1_image1, segmented_objects_image1, points_object2_image2=None, merge=False)
-
-    update_association_p2i(association_p2i, j)
-    purge_pointcloud_segmentation(object_manager)
-    update_pointcloud_segmentation(pc_segmentation, object_manager, association1)
+for image in images:
+    for object1 in objects:
+        keyimages = get_keyimages(object1):
+        for keyimage in keyimages:
+            object2 = search_object2(object1, keyimage)
+            point_object1_image2 = get_point_object1_image2()
+            point_object2_image2 = get_point_object2_image2()
+            point_object2_image1 = get_point_object2_image1()
+            iou = calculate_IoU(point_object1_image2, point_object2_image1)
+            update_object_manager(object1, point_object2_image2, iou)
+    update_segmentation_pointcloud()
 ```
-
-**Note**:  
-All the indexing operations [.] have constant time complexity.   
-association_p2i.get_key_images(.) has linear time complexity w.r.t. the number of valid points.  
-inv(.) has linear time complexity w.r.t. the number of points.  
-object2_search(.) has linearithmic time complexity w.r.t. the len(pixel_object1_image2).  
-calculate_IoU(.) has linearithmic time complexity w.r.t. len(points_object1_image2) + len(points_object2_image1).  
-update_object_manager has linearithmic time complexity w.r.t. len(points_object2_image2).   
-update_pointcloud_segmentation(.) has time complexity linear to the number of points. 
 
 ### 2. Search $O_2$
 ```
@@ -101,14 +78,9 @@ pixel_object2_image2 = segmented_objects_images.get_object(object_id)  # O(N)
 ### 3. Update object manager
 
 ```
-input: pixel_object1_image1, segmented_objects_image1, points_object2_image2, merge
-
-if merge:
-    object_id = segmented_objects_image1[pixel_object1_image1]
-    registered_object_id = points_object2_image2.get_object_id()
+if iou >= iou_threshold:
+    registered_object_id = get_object_id(point_object2_image2)
     object_manager[object_id].append(registered_object_id)
-else:
-    pass
 ```
 
 The `get_object_id(.)` returns the object id with the largest summed likelihood. 
@@ -117,14 +89,4 @@ The `get_object_id(.)` returns the object id with the largest summed likelihood.
 When an object id in a new image has multiple unique object ids, which indicates the twin registration problem, we need to purge the repeated, registered object ids.  
 
 ### 5. Update pointcloud segmentation
-```
-for pixel, point_id in association1:
-    probabilistic_object_ids = calculate_probabilistic_object_ids(pixel)
-    updated_probabilistic_object_ids = replace_object_id(probabilistic_object_ids, object_manager)
-    if pc_segmentation[point_id] is Empty:
-        pc_segmentation[point_id] = updated_probabilistic_object_ids
-    else:
-        registered_probabilistic_object_ids = pc_segmentation[point_id]
-        pc_segmentation[point_id] = normalize_probabilistic_object_ids(registered_probabilistic_object_ids, updated_probabilistic_object_ids)
 
-```
