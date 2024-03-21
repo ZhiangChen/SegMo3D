@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name='semantic_sfm',
-    version='0.0.1',
+    version='0.0.2',
     description='x segmentation on photogrammetry point cloud',
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -28,8 +28,10 @@ setup(
         'laspy>=2.1.2',
         'numpy>=1.19.5',
         'matplotlib>=3.0.3',
-        'opencv-python>=4.8.1'
+        'opencv-python>=4.8.1',
         'scipy>=1.5.4',
         'numba>=0.53.1',
+        'logging>=0.5.1',
+        'prettytable>=2.5.0',
     ],
 )

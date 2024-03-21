@@ -2,6 +2,7 @@ from ssfm.files import *
 import os
 from numba import jit
 import concurrent.futures
+import time
 
 # association on all points
 @jit(nopython=True)
@@ -345,8 +346,8 @@ if __name__ == "__main__":
 
     flag = False  # True: project semantics from one image to the point cloud.
     batch_flag = False  # True: save the associations of all images in sequence.
-    Parallel_batch_flag = False # True: save the associations of all images in parallel.
-    keyimage_flag = True  # True: build associations_keyimage.npy
+    Parallel_batch_flag = True # True: save the associations of all images in parallel.
+    keyimage_flag = False  # True: build associations_keyimage.npy
 
     if flag:
         if site == 'box_canyon':
@@ -416,12 +417,12 @@ if __name__ == "__main__":
         if site == 'box_canyon':
             # project the point cloud
             pointcloud_projector = PointcloudProjection()
-            pointcloud_projector.read_pointcloud('../../data/model.las')
-            pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+            pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/model.las')
+            pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/camera.json', '../../data/box_canyon_park/SfM_products/shots.geojson')
 
             # batch project
-            image_folder_path = '../../data/mission_2'
-            save_folder_path = '../../data/mission_2_associations_parallel'
+            image_folder_path = '../../data/box_canyon_park/DJI_photos'
+            save_folder_path = '../../data/box_canyon_park/associations'
 
             image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
             pointcloud_projector.parallel_batch_project(image_list, save_folder_path)

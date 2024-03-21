@@ -186,6 +186,13 @@ class ObjectRegistration(object):
         self.segmentation_folder_path = segmentation_folder_path
         self.association_folder_path = association_folder_path
 
+        logging.basicConfig(filename="object_registration.log", 
+                            format='%(asctime)s %(message)s', 
+                            filemode='w') 
+
+        self.logger = logging.getLogger() 
+        self.logger.setLevel(logging.DEBUG) 
+
         # check if the pointcloud file exists
         assert os.path.exists(self.pointcloud_path), 'Pointcloud path does not exist.'
         with laspy.open(self.pointcloud_path) as las_file:
@@ -236,7 +243,7 @@ class ObjectRegistration(object):
                                                         self.associations_point2pixel_file_paths[i]))
 
         # log the number of segmentation-association pairs
-        logger.info('Number of segmentation-association pairs: {}'.format(len(self.segmentation_association_pairs)))
+        self.logger.info('Number of segmentation-association pairs: {}'.format(len(self.segmentation_association_pairs)))
 
         # initialize data structures
         self.latest_registered_id = 0  # the latest registered object id
@@ -392,6 +399,7 @@ class ObjectRegistration(object):
         # Write the LAS file
         las.write(save_las_path)
 
+
     def search_object2(self, key_image, pixel_object1_image2):
         """
         Within pixels of object1 in image2, search for object2 that has the largest number of semantics ids. 
@@ -439,6 +447,7 @@ class ObjectRegistration(object):
         iou_threshold : float, the threshold for 3D IoU
         M_segmentation_ids : int, the maximum number of segmentation ids for each point
         M_keyimages : int, the maximum number of key images for each object
+        save_semantics : bool, whether to save semantics for each image
 
         Returns
         -------
@@ -454,7 +463,7 @@ class ObjectRegistration(object):
 
         for image_id in range(N_images):
             # logging the current, total number images, and image name
-            logger.info(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')
+            self.logger.info(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')
             print(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')    
 
             t1 =   time.time()
@@ -463,7 +472,7 @@ class ObjectRegistration(object):
             associations_pixel2point_file_path = self.segmentation_association_pairs[image_id][1]
             associations_point2pixel_file_path = self.segmentation_association_pairs[image_id][2]
 
-            segmented_objects_image1 = np.load(segmentation_file_path, allow_pickle=True)
+            segmented_objects_image1 = np.load(segmentation_file_path, allow_pickle=True).astype(np.int16)
             associations1_pixel2point = np.load(associations_pixel2point_file_path, allow_pickle=True)
             associations1_point2pixel = np.load(associations_point2pixel_file_path, allow_pickle=True)
 
@@ -532,7 +541,7 @@ class ObjectRegistration(object):
 
                         iou = self.calculate_3D_IoU(point_object1_image2, point_object2_image1)
 
-                        logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
+                        self.logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
 
                         if iou >= iou_threshold:
                             self.update_object_manager(object_id, point_object2_image2)
@@ -540,19 +549,19 @@ class ObjectRegistration(object):
                             self.update_object_manager(object_id, None)
             
             t3 = time.time()
-            logger.info("    time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
+            self.logger.info("    time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
             #print("time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
 
             # logging self.object_manager
-            logger.info('    object_manager: {}'.format(self.object_manager))
+            self.logger.info('    object_manager: {}'.format(self.object_manager))
 
             self.update_pc_segmentation(associations1_point2pixel, segmented_objects_image1)
             t4 = time.time()
-            logger.info("    time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
+            self.logger.info("    time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
             #print("time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
 
             t2 = time.time()
-            logger.info("    time elapsed for image {}: {}".format(image_id+1, t2-t1))
+            self.logger.info("    time elapsed for image {}: {}".format(image_id+1, t2-t1))
             #print("time elapsed for image {}: {}".format(image_id+1, t2-t1))
         
             if save_semantics:
@@ -577,17 +586,6 @@ if __name__ == "__main__":
     object_registration_flag = True
     add_semantics_to_pointcloud_flag = False
     if object_registration_flag:
-        #now we will Create and configure logger 
-        logging.basicConfig(filename="std_test.log", 
-                            format='%(asctime)s %(message)s', 
-                            filemode='w') 
-
-        #Let us Create an object 
-        global logger
-        logger=logging.getLogger() 
-
-        #Now we are going to Set the threshold of logger to DEBUG 
-        logger.setLevel(logging.DEBUG) 
 
         # Create object registration
         t1 = time.time()

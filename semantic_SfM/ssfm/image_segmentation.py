@@ -77,11 +77,11 @@ class ImageSegmentation(object):
                 stability_score_thresh=stability_score_thresh
             )
 
-    def predict(self, image_path, maxium_size=1000):
+    def predict(self, image_path, maximum_size=1000):
         """
         Arguments:
             image_path (str): Path to the image.
-            maxium_size (int): The maximum size of the image. If the image is larger than this, it will be resized.
+            maximum_size (int): The maximum size of the image. If the image is larger than this, it will be resized.
 
         Returns:
             masks (list): A list of masks.
@@ -91,11 +91,11 @@ class ImageSegmentation(object):
 
         self.image_size = image.shape
 
-        if image.shape[0] > maxium_size or image.shape[1] > maxium_size:
+        if image.shape[0] > maximum_size or image.shape[1] > maximum_size:
             if image.shape[0] > image.shape[1]:
-                image = cv2.resize(image, (int(image.shape[1] * maxium_size / image.shape[0]), maxium_size))
+                image = cv2.resize(image, (int(image.shape[1] * maximum_size / image.shape[0]), maximum_size))
             else:
-                image = cv2.resize(image, (maxium_size, int(image.shape[0] * maxium_size / image.shape[1])))
+                image = cv2.resize(image, (maximum_size, int(image.shape[0] * maximum_size / image.shape[1])))
         else:
             pass
         
@@ -108,12 +108,13 @@ class ImageSegmentation(object):
         self.image = image.copy()
         return masks
     
-    def batch_predict(self, image_paths, save_folder_path, maxium_size=1000, save_overlap=False):
+    def batch_predict(self, image_paths, save_folder_path, maximum_size=1000, save_overlap=False):
         """
         Arguments:
             image_paths (list): A list of image paths.
             save_folder_path (str): The path to save the masks.
-            maxium_size (int): The maximum size of the image. If the image is larger than this, it will be resized.
+            maximum_size (int): The maximum size of the image. If the image is larger than this, it will be resized.
+            save_overlap (bool): Whether to save the overlap of the image and the masks.
         """
         # create save folder if not exists
         if not os.path.exists(save_folder_path):
@@ -123,7 +124,7 @@ class ImageSegmentation(object):
         total = len(image_paths)
         for i, image_path in enumerate(image_paths):
             print('Processing image {}/{}.'.format(i+1, total))
-            masks = self.predict(image_path, maxium_size)
+            masks = self.predict(image_path, maximum_size)
             save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '.npy')
             self.save_npy(masks, save_path)
             if save_overlap:
@@ -184,6 +185,9 @@ class ImageSegmentation(object):
 
             # resize img to the original size (self.image_size) using nearest neighbor interpolation
             img = cv2.resize(img, (self.image_size[1], self.image_size[0]), interpolation=cv2.INTER_NEAREST)
+
+            # set the dtype to np.int16
+            img = img.astype(np.int16)
 
             np.save(save_path, img)
 
