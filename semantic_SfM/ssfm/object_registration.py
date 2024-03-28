@@ -438,7 +438,7 @@ class ObjectRegistration(object):
         iou = intersection / union
         return iou
 
-    def object_registration(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False):
+    def object_registration(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False, save_semantic_las=False):
         """
         Register objects in the point cloud.
 
@@ -572,8 +572,9 @@ class ObjectRegistration(object):
                 save_semantics_path = os.path.join(semantics_folder_path, 'semantics_{}.npy'.format(image_id))
                 self.save_semantics(save_semantics_path)
 
-                save_las_path = os.path.join(self.association_folder_path, 'semantics', 'semantics_{}.las'.format(image_id))
-                add_semantics_to_pointcloud(self.pointcloud_path, save_semantics_path, save_las_path)   
+                if save_semantic_las:
+                    save_las_path = os.path.join(self.association_folder_path, 'semantics', 'semantics_{}.las'.format(image_id))
+                    add_semantics_to_pointcloud(self.pointcloud_path, save_semantics_path, save_las_path)   
                     
 
 if __name__ == "__main__":

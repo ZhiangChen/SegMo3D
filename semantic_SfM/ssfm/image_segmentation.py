@@ -203,16 +203,25 @@ sam_params['stability_score_thresh'] = 0.92
 
 if __name__ == '__main__':
     site = "box_canyon" # "box_canyon" or "courtwright
-    single_test = False
-    batch_test = True
+    single_test = True
+    batch_test = False
     write_segmentation_test = False  
 
     if single_test:
-        image_segmentor = ImageSegmentation(sam_params)        
+        image_segmentor = ImageSegmentation(sam_params)
+        """
         image_path = '../../data/mission_2/DJI_0247.JPG'
         masks = image_segmentor.predict(image_path)
         image_segmentor.save_overlap(image_segmentor.image, masks, './test.png')
         image_segmentor.save_npy(masks, './test.npy')
+        """
+        # read an image
+        image_path = '../../data/DJI_0595.png'
+        image = cv2.imread(image_path)
+        # resize the image
+        image = cv2.resize(image, (1000, 666))
+        masks = image_segmentor.predict(image_path)
+        image_segmentor.save_overlap(image, masks, '../../data/test.png')
 
     
     if batch_test:

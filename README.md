@@ -11,7 +11,7 @@ pip3 install .
 
 Option 2:
 ```
-pip3 install ssfm
+pip3 install semantic-SfM
 ```
 
 **Hardware requirements**: This project utilizes the Segment Anything Model (SAM) for panoptic segmentation. GPUs are not required for SAM but are recommended to expedite inference speed. The other parts of this project use only CPUs. As a point cloud will be stored in memory, memory usage depends on the point cloud size. 
@@ -44,3 +44,11 @@ For image segmentation, we have used Segment Anything Model from Meta:
 2. Data Structure and Algorithms for Object Registration: [docs/object_registration.md](docs/object_registration.md)
 
 3. Running a Complete Workflow Example from Scratch: [semantic_SfM/ssfm/workflow.ipynb](semantic_SfM/ssfm/workflow.ipynb)
+
+
+## QnA
+
+1. *When I import point clouds into CloudCompare, the points look sparse with strips. How can I fix it?* Such issues occur when point coordinates in CloudCompare are large. To fix the visualization issues, you can choose to automatically re-center the points when importing a point cloud. 
+
+2. *My semantics in a resulting point cloud are shifted. Why does this happen?* When using WebODM, the camera intrinsic parameter estimation sometimes can be inaccurate. Usually, when $c_x$ or $c_y$ are greater than +/-0.01, this indicates the camera intrinsic parameter estimation may not be useable. In this case, you should use Agisoft, which usually has more accurate camera calibration results.  
+

@@ -4,6 +4,9 @@ from numba import jit
 import concurrent.futures
 import time
 
+from joblib import Parallel, delayed
+from tqdm import tqdm
+
 # association on all points
 @jit(nopython=True)
 def update_image_and_associations(image, z_buffer, points, colors, height, width):
@@ -130,6 +133,7 @@ def add_color_to_points(point2pixel, colors, segmentation, image_height, image_w
     #print('Point count: ', point_count)
     return colors
 
+
 class PointcloudProjection(object):
     """
     This class is used to project the point cloud onto the image using projection. 
@@ -137,6 +141,7 @@ class PointcloudProjection(object):
     2. Project the point cloud onto the image: PointcloudProjection.project
     """
     def __init__(self) -> None:
+        self.sfm_software = None
         pass
 
     def read_pointcloud(self, pointcloud_path):
@@ -144,7 +149,11 @@ class PointcloudProjection(object):
         Arguments:
             pointcloud_path (str): Path to the pointcloud file.
         """
+        assert self.sfm_software is not None, 'Please read the camera parameters first.'
         self.points, self.colors = read_las_file(pointcloud_path)
+        if self.sfm_software == 'Agisoft':
+            self.colors = self.colors / 256
+            
 
     def read_camera_parameters(self, camera_parameters_path, additional_camera_parameters_path=None):
         """
@@ -155,9 +164,11 @@ class PointcloudProjection(object):
         if additional_camera_parameters_path is not None:
             # WebODM
             self.cameras = read_camera_parameters_webodm(camera_parameters_path, additional_camera_parameters_path)
+            self.sfm_software = "WebODM"
         else:
             # Agisoft
             self.cameras = read_camera_parameters_agisoft(camera_parameters_path)
+            self.sfm_software = "Agisoft"
 
     def read_segmentation(self, segmentation_path):
         """
@@ -202,7 +213,7 @@ class PointcloudProjection(object):
 
 
         # Update image and get associations
-        image, z_buffer, pixel2point, point2pixel   = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
+        image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
 
         return image, pixel2point, point2pixel 
     
@@ -290,6 +301,31 @@ class PointcloudProjection(object):
             finally:
                 print("Executor shut down.")
 
+    def process_frame_joblib(self, frame_key, save_folder_path):
+        # This is a wrapper for the original `process_frame` method, adapted for use with joblib.
+        # It's essentially the same as `process_frame` but could be adjusted if needed.
+        return self.process_frame(frame_key, save_folder_path)
+    
+    def parallel_batch_project_joblib(self, frame_keys, save_folder_path, num_workers=8):
+        """
+        Execute the processing of frames in parallel using joblib and display a progress bar with tqdm.
+
+        Arguments:
+            frame_keys (list): A list of frame keys.
+            save_folder_path (str): The path to save the images.
+            num_workers (int): The number of worker processes.
+        """
+        if not os.path.exists(save_folder_path):
+            os.makedirs(save_folder_path)
+
+        # Wrap the iterable (frame_keys) with tqdm for the progress bar
+        # tqdm provides a description and the total count for better progress visibility
+        tasks = tqdm(frame_keys, desc="Processing frames", total=len(frame_keys))
+
+        # Use Joblib for parallel processing with the tqdm-wrapped iterable
+        Parallel(n_jobs=num_workers)(
+            delayed(self.process_frame_joblib)(frame_key, save_folder_path) for frame_key in tasks)
+
     def build_associations_keyimage(self, read_folder_path, segmentation_folder_path):
         """
         Arguments:
@@ -342,11 +378,11 @@ class PointcloudProjection(object):
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    site = 'box_canyon'
+    site = 'courtwright'
 
-    flag = False  # True: project semantics from one image to the point cloud.
+    flag = True  # True: project semantics from one image to the point cloud.
     batch_flag = False  # True: save the associations of all images in sequence.
-    Parallel_batch_flag = True # True: save the associations of all images in parallel.
+    Parallel_batch_flag = False # True: save the associations of all images in parallel.
     keyimage_flag = False  # True: build associations_keyimage.npy
 
     if flag:
@@ -377,20 +413,30 @@ if __name__ == "__main__":
         elif site == 'courtwright':
             # project the point cloud
             pointcloud_projector = PointcloudProjection()
-            pointcloud_projector.read_pointcloud('../../data/courtwright/courtwright.las')
-            pointcloud_projector.read_camera_parameters('../../data/courtwright/cameras.json', '../../data/courtwright/shots.geojson')
-            pointcloud_projector.read_segmentation('../../data/courtwright/segmentations/DJI_0590.npy')
-            image, pixel2point, point2pixel  = pointcloud_projector.project('DJI_0590.JPG')
+            #pointcloud_projector.read_camera_parameters('../../data/courtright/SfM_products/cameras.json', '../../data/courtright/SfM_products/shots.geojson')
+            #pointcloud_projector.read_pointcloud('../../data/courtright/SfM_products/model.las')
+            pointcloud_projector.read_camera_parameters('../../data/courtright/SfM_products/agisoft_cameras.xml')
+            pointcloud_projector.read_pointcloud('../../data/courtright/SfM_products/agisoft_model.las')
+            pointcloud_projector.read_segmentation('../../data/courtright/segmentations/DJI_0595.npy')
+            t1 = time.time()
+            image, pixel2point, point2pixel  = pointcloud_projector.project('DJI_0595.JPG')
+            t2 = time.time()
+            print('Time for projection: ', t2 - t1)
 
+            # save image
+            image_path = '../../data/DJI_0595_agisoft.png'
+            cv2.imwrite(image_path, image)
+
+            
             # add color to points
             t1 = time.time()
-            radius = 0
+            radius = 2
             decaying = 2
             colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
             t2 = time.time()
             print('Time for adding colors: ', t2 - t1)
 
-            write_las(pointcloud_projector.points, colors, "../../data/courtwright_test.las")
+            write_las(pointcloud_projector.points, colors, "../../data/courtright_test_agisoft.las")
 
     else:
         pass

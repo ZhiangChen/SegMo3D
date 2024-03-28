@@ -11,7 +11,7 @@ pip3 install .
 
 Option 2:
 ```
-pip3 install ssfm
+pip3 install semantic-SfM
 ```
 
 **Hardware requirements**: This project utilizes the Segment Anything Model (SAM) for panoptic segmentation. GPUs are not required for SAM but are recommended to expedite inference speed. The other parts of this project use only CPUs. As a point cloud will be stored in memory, memory usage depends on the point cloud size. 

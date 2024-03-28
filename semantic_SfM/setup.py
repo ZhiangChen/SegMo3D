@@ -4,9 +4,9 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(
-    name='semantic_sfm',
-    version='0.0.2',
-    description='x segmentation on photogrammetry point cloud',
+    name='semantic_SfM',
+    version='0.0.5',
+    description='instance segmentation on SfM point clouds',
     long_description=long_description,
     long_description_content_type="text/markdown",
     url='https://github.com/ZhiangChen/semantic_SfM',
@@ -31,7 +31,6 @@ setup(
         'opencv-python>=4.8.1',
         'scipy>=1.5.4',
         'numba>=0.53.1',
-        'logging>=0.5.1',
         'prettytable>=2.5.0',
     ],
 )
