@@ -43,7 +43,11 @@ For image segmentation, we have used Segment Anything Model from Meta:
 
 2. Data Structure and Algorithms for Object Registration: [docs/object_registration.md](docs/object_registration.md)
 
-3. Running a Complete Workflow Example from Scratch: [semantic_SfM/ssfm/workflow.ipynb](semantic_SfM/ssfm/workflow.ipynb)
+3. Depth Image Rendering from Mesh and Depth Filtering: [docs/depth_filtering.md](docs/depth_filtering.md)
+
+4. Running a Complete Workflow Example from Scratch: [semantic_SfM/ssfm/workflow.ipynb](semantic_SfM/ssfm/workflow.ipynb)
+
+
 
 
 ## QnA
