@@ -149,7 +149,7 @@ class PointcloudProjection(object):
         Arguments:
             pointcloud_path (str): Path to the pointcloud file.
         """
-        assert self.sfm_software is not None, 'Please read the camera parameters first.'
+        assert self.sfm_software is not None, 'Please read the camera parameters before reading point cloud.'
         self.points, self.colors = read_las_file(pointcloud_path)
         if self.sfm_software == 'Agisoft':
             self.colors = self.colors / 256
@@ -378,7 +378,7 @@ class PointcloudProjection(object):
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    site = 'courtwright'
+    site = 'box_canyon'
 
     flag = True  # True: project semantics from one image to the point cloud.
     batch_flag = False  # True: save the associations of all images in sequence.
@@ -395,9 +395,11 @@ if __name__ == "__main__":
 
             # project the point cloud
             pointcloud_projector = PointcloudProjection()
-            pointcloud_projector.read_pointcloud('../../data/model.las')
-            pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
-            pointcloud_projector.read_segmentation('../../data/DJI_0246.npy')
+            pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml')
+            pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
+            
+            #pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
+            pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0246.npy')
             image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0246.JPG')
 
             # add color to points
@@ -408,7 +410,8 @@ if __name__ == "__main__":
             t2 = time.time()
             print('Time for adding colors: ', t2 - t1)
 
-            write_las(pointcloud_projector.points, colors, "../../data/test.las")
+            write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/segmentation.las")
+
 
         elif site == 'courtwright':
             # project the point cloud

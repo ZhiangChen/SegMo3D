@@ -9,7 +9,7 @@ import os
 
 
 @jit(nopython=True)
-def update_image_and_associations(z_buffer, points, height, width):
+def calculate_depth_image(z_buffer, points, height, width):
     pixel2point = np.full((height, width), -1, dtype=np.int32)
 
     N_points = points.shape[0]
@@ -23,13 +23,7 @@ def update_image_and_associations(z_buffer, points, height, width):
                 z_buffer[py, px] = z
                 pixel2point[py, px] = i
 
-    # get the pixel of valid associations
-    u_indices, v_indices = np.where(pixel2point != -1)
-    point2pixel = np.full((N_points, 2), -1, dtype=np.int16)
-    for idx in range(len(u_indices)):
-        point2pixel[pixel2point[u_indices[idx], v_indices[idx]]] = np.array([u_indices[idx], v_indices[idx]])
-
-    return z_buffer, pixel2point, point2pixel
+    return z_buffer, pixel2point
 
 
 @jit(nopython=True)
@@ -120,7 +114,7 @@ class DepthImageRendering(object):
         # Drop the homogeneous component (w)
         points_camera_space = points_transformed[:, :3]
 
-        points_projected_d = np.matmul(points_camera_space, camera_intrinsics.T)
+        points_projected_d = np.matmul(points_camera_space, self.camera_intrinsics.T)
         points_projected = points_projected_d / points_projected_d[:, -1].reshape(-1, 1)
         # replace depth 
         points_projected[:, 2] = points_projected_d[:, 2]
@@ -129,7 +123,7 @@ class DepthImageRendering(object):
         z_buffer = np.full((self.image_height, self.image_width), np.inf)
 
         # Update image and get associations
-        z_buffer, pixel2point, point2pixel = update_image_and_associations(z_buffer, points_projected, self.image_height, self.image_width)
+        z_buffer, pixel2point = calculate_depth_image(z_buffer, points_projected, self.image_height, self.image_width)
 
         # get vertices that are associated with pixels on the image
         ids_valid_vertices = np.unique(pixel2point[pixel2point != -1])
