@@ -196,7 +196,7 @@ sam_params = {}
 sam_params['model_name'] = 'sam'
 sam_params['model_path'] = '../sam/sam_vit_h_4b8939.pth'
 sam_params['model_type'] = 'vit_h'
-sam_params['device'] = 'cuda:1'
+sam_params['device'] = 'cuda:2'
 sam_params['points_per_side'] = 64
 sam_params['pred_iou_thresh'] = 0.96
 sam_params['stability_score_thresh'] = 0.92
@@ -216,12 +216,33 @@ if __name__ == '__main__':
         image_segmentor.save_npy(masks, './test.npy')
         """
         # read an image
-        image_path = '../../data/DJI_0595.png'
+        image_path = '../../data/courtright/DJI_photos/DJI_0576.JPG'
         image = cv2.imread(image_path)
         # resize the image
         image = cv2.resize(image, (1000, 666))
         masks = image_segmentor.predict(image_path)
-        image_segmentor.save_overlap(image, masks, '../../data/test.png')
+        image_segmentor.save_overlap(image, masks, '../../data/courtright/test.png')
+        # split image to 4 parts
+        img1 = image[0:333, 0:500]
+        img2 = image[0:333, 500:1000]
+        img3 = image[333:666, 0:500]
+        img4 = image[333:666, 500:1000]
+
+        cv2.imwrite('../../data/courtright/test1.png', img1)
+        cv2.imwrite('../../data/courtright/test2.png', img2)
+        cv2.imwrite('../../data/courtright/test3.png', img3)
+        cv2.imwrite('../../data/courtright/test4.png', img4)
+
+        masks1 = image_segmentor.predict('../../data/courtright/test1.png')
+        masks2 = image_segmentor.predict('../../data/courtright/test2.png')
+        masks3 = image_segmentor.predict('../../data/courtright/test3.png')
+        masks4 = image_segmentor.predict('../../data/courtright/test4.png')
+
+        image_segmentor.save_overlap(img1, masks1, '../../data/courtright/test1.png')
+        image_segmentor.save_overlap(img2, masks2, '../../data/courtright/test2.png')
+        image_segmentor.save_overlap(img3, masks3, '../../data/courtright/test3.png')
+        image_segmentor.save_overlap(img4, masks4, '../../data/courtright/test4.png')
+        
 
     
     if batch_test:

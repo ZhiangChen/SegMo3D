@@ -1,4 +1,5 @@
 from ssfm.files import *
+from ssfm.depth_image_rendering import *
 import os
 from numba import jit
 import concurrent.futures
@@ -134,15 +135,17 @@ def add_color_to_points(point2pixel, colors, segmentation, image_height, image_w
     return colors
 
 
-class PointcloudProjection(object):
+class PointcloudProjection(DepthImageRendering):
     """
     This class is used to project the point cloud onto the image using projection. 
     1. Read the point cloud and camera parameters: PointcloudProjection.read_pointcloud and PointcloudProjection.read_camera_parameters
     2. Project the point cloud onto the image: PointcloudProjection.project
     """
-    def __init__(self) -> None:
+    def __init__(self, depth_filtering_threshold=0) -> None:
+        super().__init__()
         self.sfm_software = None
-        pass
+        self.tri_mesh = None
+        self.depth_filtering_threshold= depth_filtering_threshold
 
     def read_pointcloud(self, pointcloud_path):
         """
@@ -170,6 +173,10 @@ class PointcloudProjection(object):
             self.cameras = read_camera_parameters_agisoft(camera_parameters_path)
             self.sfm_software = "Agisoft"
 
+        self.camera_intrinsics = self.cameras['K'] 
+        self.image_height = self.cameras['height']
+        self.image_width = self.cameras['width']
+
     def read_segmentation(self, segmentation_path):
         """
         Arguments:
@@ -182,19 +189,17 @@ class PointcloudProjection(object):
         """
         Arguments:
             frame_key (str): The key of the camera frame to be projected onto.
+            depth_filtering_threshold (float): The threshold for depth filtering. depth_point (> depth_mesh + depth_filtering_threshold) will be filtered out.
         """
-        camera_intrinsics = self.cameras['K'] 
-        extrinsic_matrix = self.cameras[frame_key]
-        image_height = self.cameras['height']
-        image_width = self.cameras['width']
+        assert self.tri_mesh is not None, 'Please read the mesh first.'
+        assert self.sfm_software is not None, 'Please read the camera parameters first.'
 
-        self.image_height = image_height
-        self.image_width = image_width
+        self.extrinsic_matrix = self.cameras[frame_key]
 
         # Transform the point cloud using the extrinsic matrix
         points_homogeneous = np.hstack((self.points, np.ones((len(self.points), 1))))
 
-        extrinsic_matrix_inv = np.linalg.inv(extrinsic_matrix)
+        extrinsic_matrix_inv = np.linalg.inv(self.extrinsic_matrix)
 
         points_transformed = np.matmul(points_homogeneous, extrinsic_matrix_inv.T)
 
@@ -202,18 +207,23 @@ class PointcloudProjection(object):
         # Drop the homogeneous component (w)
         points_camera_space = points_transformed[:, :3]
 
-        points_projected_d = np.matmul(points_camera_space, camera_intrinsics.T)
+        points_projected_d = np.matmul(points_camera_space, self.camera_intrinsics.T)
         points_projected = points_projected_d / points_projected_d[:, -1].reshape(-1, 1)
         # replace depth 
         points_projected[:, 2] = points_projected_d[:, 2]
 
         # Initialize image (2D array) and z-buffer
-        image = np.zeros((image_height, image_width, 3), dtype=np.uint8)
-        z_buffer = np.full((image_height, image_width), np.inf)
+        image = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
 
+        if self.depth_filtering_threshold == 0:
+            z_buffer = np.full((self.image_height, self.image_width), np.inf)
+        else:
+            # Get depth image from mesh
+            depth_mesh = self.render_depth_image(frame_key)
+            z_buffer = depth_mesh + self.depth_filtering_threshold
 
         # Update image and get associations
-        image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, image_height, image_width)
+        image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
 
         return image, pixel2point, point2pixel 
     
@@ -394,11 +404,11 @@ if __name__ == "__main__":
             #image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
 
             # project the point cloud
-            pointcloud_projector = PointcloudProjection()
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.1)
             pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml')
             pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
             
-            #pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
+            pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
             pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0246.npy')
             image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0246.JPG')
 
@@ -410,8 +420,7 @@ if __name__ == "__main__":
             t2 = time.time()
             print('Time for adding colors: ', t2 - t1)
 
-            write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/segmentation.las")
-
+            write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/depth_filter_segmentation.las")
 
         elif site == 'courtwright':
             # project the point cloud

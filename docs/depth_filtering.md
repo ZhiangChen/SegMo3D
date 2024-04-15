@@ -33,6 +33,8 @@ Compared with point clouds, mesh models are continuous in space. From the camera
 
 5. Depth Buffering (Z-Buffering): To handle occlusions, maintain a depth buffer (a 2D array the size of your output image) initialized with infinity values. For each pixel that a triangle covers, compare the interpolated depth value with the current value in the depth buffer. If it's closer to the camera, update the pixel's depth value in the depth buffer and the depth image. 
 
+(The mesh model from WebODM (v2.4.2 at the moment) is in local coordinate system and can be transformed to UTM by adding the offsets from georeference files)
+
 ## Depth image filtering
 Using the depth image generated from a mesh model, I create a depth filter to exclude points that are located beyond the foremost faces. Equivalently, this depth filter keeps only those points whose depth does not exceed a frontier. This frontier is set at a distance beyond the foremost faces, determined by a predefined threshold value:
 
