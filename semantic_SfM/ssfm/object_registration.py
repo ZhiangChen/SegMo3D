@@ -256,12 +256,13 @@ class ObjectRegistration(object):
         self.decaying = 2
         self.likelihoods = compute_gaussian_likelihood(radius=self.radius, decaying=self.decaying)
 
-    def update_object_manager(self, object_id, point_object2_image2):
-        if point_object2_image2 is None:
+    def update_object_manager(self, object_id, intersected_points):
+        if intersected_points is None:
             registered_objects_id = None
-        else:  # if point_object2_image2 is not None, get the object id with the maximum probability
-            ids = self.pc_segmentation_ids[point_object2_image2, :]
-            probs = self.pc_segmentation_probs[point_object2_image2, :]
+        else:  
+            # if intersected_points is not None, get the object id with the maximum probability
+            ids = self.pc_segmentation_ids[intersected_points, :]
+            probs = self.pc_segmentation_probs[intersected_points, :]
 
             # Flatten the arrays and compute the sum of probabilities for each unique id
             unique_ids, indices = np.unique(ids, return_inverse=True)
@@ -270,6 +271,9 @@ class ObjectRegistration(object):
             # Find the id with the maximum probability sum
             max_prob_index = np.argmax(summed_probs)
             registered_objects_id = unique_ids[max_prob_index]
+
+            # log registered_objects_id
+            self.logger.info('    registered_objects_id: {}'.format(registered_objects_id))
 
         if object_id not in self.object_manager.keys():
             if registered_objects_id == None:
@@ -362,6 +366,20 @@ class ObjectRegistration(object):
                                     self.likelihoods, 
                                     self.pc_segmentation_ids, 
                                     self.pc_segmentation_probs)
+        
+        # test
+        # make a copy of self.object_manager
+        object_manager_copy = self.object_manager.copy()
+        for i, (object_id, registered_object_ids) in enumerate(object_manager_copy.items()):
+            if registered_object_ids == []:
+                object_manager_copy[object_id] = [object_id + self.latest_registered_id]
+            else:
+                object_manager_copy[object_id] = registered_object_ids
+
+        # log object_manager_copy
+        self.logger.info('    object_manager_copy: {}'.format(object_manager_copy))
+
+        # test end
                 
         self.latest_registered_id += len(self.normalized_likelihoods)
 
@@ -411,6 +429,7 @@ class ObjectRegistration(object):
 
         Returns
         -------
+        max_count_id : int, the object id of object2
         pixel_object2_image2 : list of point indices
         """
         segmented_objects_image2 = self.segmented_objects_images[key_image]
@@ -433,10 +452,11 @@ class ObjectRegistration(object):
         -------
         iou : float
         """
-        intersection = np.count_nonzero(np.in1d(point_object1_image2, point_object2_image1, assume_unique=True))
+        intersected_points = np.intersect1d(point_object1_image2, point_object2_image1, assume_unique=True)
+        intersection = np.count_nonzero(intersected_points)
         union = len(point_object1_image2) + len(point_object2_image1) - intersection
         iou = intersection / union
-        return iou
+        return iou, intersected_points
 
     def object_registration(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False, save_semantic_las=False):
         """
@@ -533,20 +553,23 @@ class ObjectRegistration(object):
 
                         object2_id_image2, pixel_object2_image2 = self.search_object2(key_image, pixel_object1_image2)
 
-                        point_object2_image2 = associations2_pixel2point[pixel_object2_image2[:, 0], pixel_object2_image2[:, 1]]  # point_object2_image2 is a list of point ids
-                        point_object2_image2 = point_object2_image2[point_object2_image2 != -1]
-                        pixel_object2_image1 = associations1_point2pixel[point_object2_image2]
-                        pixel_object2_image1 = pixel_object2_image1[pixel_object2_image1[:, 0] != -1]
-                        point_object2_image1 = associations1_pixel2point[pixel_object2_image1[:, 0], pixel_object2_image1[:, 1]]
-
-                        iou = self.calculate_3D_IoU(point_object1_image2, point_object2_image1)
-
-                        self.logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
-
-                        if iou >= iou_threshold:
-                            self.update_object_manager(object_id, point_object2_image2)
-                        else:
+                        if object2_id_image2 == -1:
                             self.update_object_manager(object_id, None)
+                        else:
+                            point_object2_image2 = associations2_pixel2point[pixel_object2_image2[:, 0], pixel_object2_image2[:, 1]]  # point_object2_image2 is a list of point ids
+                            point_object2_image2 = point_object2_image2[point_object2_image2 != -1]
+                            pixel_object2_image1 = associations1_point2pixel[point_object2_image2]
+                            pixel_object2_image1 = pixel_object2_image1[pixel_object2_image1[:, 0] != -1]
+                            point_object2_image1 = associations1_pixel2point[pixel_object2_image1[:, 0], pixel_object2_image1[:, 1]]
+
+                            iou, intersected_points = self.calculate_3D_IoU(point_object1_image2, point_object2_image1)
+
+                            self.logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
+
+                            if iou >= iou_threshold:
+                                self.update_object_manager(object_id, intersected_points)
+                            else:
+                                self.update_object_manager(object_id, None)
             
             t3 = time.time()
             self.logger.info("    time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
@@ -579,10 +602,10 @@ class ObjectRegistration(object):
 
 if __name__ == "__main__":
     # Set paths
-    pointcloud_path = '../../data/model.las'
-    segmentation_folder_path = '../../data/mission_2_segmentations'
-    image_folder_path = '../../data/mission_2'
-    association_folder_path = '../../data/mission_2_associations_parallel'
+    pointcloud_path = '../../data/box_canyon_park/SfM_products/agisoft_model.las'
+    segmentation_folder_path = '../../data/box_canyon_park/segmentations'
+    image_folder_path = '../../data/box_canyon_park/DJI_photos'
+    association_folder_path = '../../data/box_canyon_park/associations'
 
     object_registration_flag = True
     add_semantics_to_pointcloud_flag = False
@@ -595,8 +618,8 @@ if __name__ == "__main__":
         print('Time elapsed for creating object registration: {}'.format(t2-t1))
 
         # Run object registration
-        #obr.object_registration(iou_threshold=0.5, save_semantics=True)
-        obr.object_registration(iou_threshold=0.5)
+        obr.object_registration(iou_threshold=0.5, save_semantics=True)
+        #obr.object_registration(iou_threshold=0.5)
 
     if add_semantics_to_pointcloud_flag:
 

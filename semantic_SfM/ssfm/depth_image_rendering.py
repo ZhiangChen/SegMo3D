@@ -136,5 +136,7 @@ class DepthImageRendering(object):
 
         depth_image_mesh = rasterize_depth_image(self.faces[mask_valid_faces], points_projected, self.image_height, self.image_width)
 
+        depth_image_mesh[depth_image_mesh == np.inf] = 0
+
         return depth_image_mesh
 

@@ -404,23 +404,23 @@ if __name__ == "__main__":
             #image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
 
             # project the point cloud
-            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.1)
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.2)
             pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml')
             pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
             
             pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
-            pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0246.npy')
-            image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0246.JPG')
+            pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0313.npy')
+            image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0313.JPG')
 
             # add color to points
             t1 = time.time()
-            radius = 0
+            radius = 2
             decaying = 2
             colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
             t2 = time.time()
             print('Time for adding colors: ', t2 - t1)
 
-            write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/depth_filter_segmentation.las")
+            write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/313_depth_filter_segmentation.las")
 
         elif site == 'courtwright':
             # project the point cloud

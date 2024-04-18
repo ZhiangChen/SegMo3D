@@ -257,12 +257,8 @@ class PointcloudProjection(object):
         print('Time for projection: ', t2 - t1)
 
         pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
-        if not os.path.exists(pixel2point_folder_path):
-            os.makedirs(pixel2point_folder_path)
 
         point2pixel_folder_path = os.path.join(save_folder_path, 'point2pixel')
-        if not os.path.exists(point2pixel_folder_path):
-            os.makedirs(point2pixel_folder_path)
 
         # save pixel2point as npy
         pixel2point_path = os.path.join(pixel2point_folder_path, frame_key[:-4] + '.npy')
@@ -283,6 +279,15 @@ class PointcloudProjection(object):
         """
         if not os.path.exists(save_folder_path):
             os.makedirs(save_folder_path)
+
+        pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
+        if not os.path.exists(pixel2point_folder_path):
+            os.makedirs(pixel2point_folder_path)
+
+        point2pixel_folder_path = os.path.join(save_folder_path, 'point2pixel')
+        if not os.path.exists(point2pixel_folder_path):
+            os.makedirs(point2pixel_folder_path)
+
 
         with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = [executor.submit(self.process_frame, frame_key, save_folder_path) 
@@ -317,6 +322,14 @@ class PointcloudProjection(object):
         """
         if not os.path.exists(save_folder_path):
             os.makedirs(save_folder_path)
+
+        pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
+        if not os.path.exists(pixel2point_folder_path):
+            os.makedirs(pixel2point_folder_path)
+
+        point2pixel_folder_path = os.path.join(save_folder_path, 'point2pixel')
+        if not os.path.exists(point2pixel_folder_path):
+            os.makedirs(point2pixel_folder_path)
 
         # Wrap the iterable (frame_keys) with tqdm for the progress bar
         # tqdm provides a description and the total count for better progress visibility
