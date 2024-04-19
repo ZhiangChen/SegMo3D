@@ -89,6 +89,20 @@ Debugging intrinsic matrix can be cumbersome. Here are several important steps t
 3. Exam the projected image. Resize the image if the orignal size is too large. The projected image may contain many black pixels because the original point cloud is sparser than image pixels. Nearest interpolation can be used to fill the black pixels. Details can be found in the tutorial [Jupyter Notebook](../semantic_SfM/ssfm/projection.ipynb). 
 
 
+## Distortion correction
+When inputting JPG or RAW images from UAVs to SfM, WebODM or Agisoft will automatically correct distortion during the photo alignment process (therefore, users do not need to manually implement distortion correction for WebODM or Agisoft). The distortion coefficients 
+
+$(k_1, k_2, p_1, p_2, k_3)$
+
+can be exported from the SfM software. 
+
+After projecting a point cloud to a image plane, distortion correction is not needed, because I assume an ideal pinhole camera model for the projection process, which does not cause any distortion. However, distortion correction should be applied to the JPG or RAW images from UAVs, which aligns the pixels in distortion-corrected images with those in pointcloud-projected images. I suggest to have distortion correction after machine learning segmentation, because distortion correction may cause black edges to the images, which may affect segmentation results. OpenCV provides Python APIs to implement distortion correction `cv2.undistort`. This function also support multiple (more than three) channels.
+
+The following figures show (1) the original JPG from a DJI UAV and distortion-corrected image, and (2) the distortion-corrected image and pointcloud-projected image. 
+![JPG vs undistorted](./images/original_undistorted.png)
+
+![JPG vs undistorted](./images/undistorted_projected.png)
+
 ## N-d array and coordinates
 ```
 >>> a = np.arange(15).reshape(3,5)

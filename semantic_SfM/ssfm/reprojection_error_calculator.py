@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 from numba import jit
 from joblib import Parallel, delayed
 from tqdm import tqdm
+import cv2
 
 from ssfm.files import read_camera_parameters_agisoft
 
@@ -60,8 +61,6 @@ class ReprojectionErrorCalculator(object):
         frame_key = self.photo_id_name[photo_id]
         extrinsic_matrix = self.cameras[frame_key]
         camera_intrinsics = self.cameras['K'] 
-        image_height = self.cameras['height']
-        image_width = self.cameras['width']
 
         points = np.array(self.tie_points[photo_id][0])
 
@@ -83,13 +82,14 @@ class ReprojectionErrorCalculator(object):
 
         # Calculate the reprojection error
         original_pixel_coordinates = np.array(self.tie_points[photo_id][1])
+
         reprojected_pixel_coordinates = points_projected[:, :2]
         error = np.linalg.norm(original_pixel_coordinates - reprojected_pixel_coordinates, axis=1)
 
-        max_error = np.max(error)
-        mean_error = np.mean(error)
+        #max_error = np.max(error)
+        #mean_error = np.mean(error)
 
-        return mean_error, max_error
+        return error #mean_error, max_error
     
     def calculate_reprojection_error_all(self, num_cores=16):
         results = Parallel(n_jobs=num_cores)(delayed(self.calculate_reprojection_error)(photo_id) for photo_id in tqdm(self.tie_points.keys()))
@@ -114,4 +114,9 @@ class ReprojectionErrorCalculator(object):
 if __name__ == "__main__":
     camera_file_path = "../../data/box_canyon_park/SfM_products/agisoft_cameras.xml"
     reprojection_error_calculator = ReprojectionErrorCalculator(camera_file_path)
-    sorted_mean_errors, sorted_mean_error_file_names, sorted_max_errors, sorted_max_error_file_names = reprojection_error_calculator.calculate_reprojection_error_all()
+    #sorted_mean_errors, sorted_mean_error_file_names, sorted_max_errors, sorted_max_error_file_names = reprojection_error_calculator.calculate_reprojection_error_all()
+    error = reprojection_error_calculator.calculate_reprojection_error(0)
+    # print histogram of errors
+    import matplotlib.pyplot as plt
+    plt.hist(error, bins=100)
+    plt.show()

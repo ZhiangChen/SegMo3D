@@ -3,6 +3,7 @@ import os
 import cv2
 import pickle
 import numpy as np
+from ssfm.files import *
 
 """
 SamAutomaticMaskGenerator
@@ -49,6 +50,8 @@ https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/
 
 class ImageSegmentation(object):
     def __init__(self, configs):
+
+
         self.configs = configs
 
         model_pool = ['sam']
@@ -76,6 +79,25 @@ class ImageSegmentation(object):
                 pred_iou_thresh=pred_iou_thresh,
                 stability_score_thresh=stability_score_thresh
             )
+
+        self.distortion_params = None
+
+    def set_distortion_correction(self, camera_parameters_path, additional_camera_parameters_path=None):
+        """
+        Arguments:
+            camera_parameters_path (str): Path to the camera parameters file.
+            additional_camera_parameters_path (str): Path to the additional camera parameters file.
+        """
+        if additional_camera_parameters_path is not None:
+            # WebODM
+            cameras = read_camera_parameters_webodm(camera_parameters_path, additional_camera_parameters_path)
+        else:
+            # Agisoft
+            cameras = read_camera_parameters_agisoft(camera_parameters_path)
+
+        self.distortion_params = cameras['distortion_params']
+        self.matrix_intrinsics = cameras['K']
+        
 
     def predict(self, image_path, maximum_size=1000):
         """
@@ -185,6 +207,12 @@ class ImageSegmentation(object):
 
             # resize img to the original size (self.image_size) using nearest neighbor interpolation
             img = cv2.resize(img, (self.image_size[1], self.image_size[0]), interpolation=cv2.INTER_NEAREST)
+
+            if self.distortion_params is not None:
+                # undistort the image
+                img = cv2.undistort(img, self.matrix_intrinsics, self.distortion_params)
+            else:
+                pass
 
             # set the dtype to np.int16
             img = img.astype(np.int16)

@@ -156,7 +156,7 @@ def read_camera_parameters_agisoft(file_path):
     p1 = float(root.find('.//Distortion/P1').text)
     p2 = float(root.find('.//Distortion/P2').text)
 
-    distortion_params = [k1, k2, p1, p2, k3]
+    distortion_params = np.array([k1, k2, p1, p2, k3])
     
     cameras['distortion_params'] = distortion_params
 
