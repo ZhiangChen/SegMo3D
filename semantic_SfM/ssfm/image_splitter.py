@@ -53,8 +53,8 @@ class ImageSplitter(object):
             height, width = image.shape[:2]
 
             # get the patch height and width
-            patch_height = int((width - overlap) / N + overlap)
-            patch_width = int((height - overlap) / N + overlap)
+            patch_height = int((height - overlap) / N + overlap)
+            patch_width = int((width - overlap) / N + overlap)
 
             
             if not os.path.exists(image_write_folder_path):
