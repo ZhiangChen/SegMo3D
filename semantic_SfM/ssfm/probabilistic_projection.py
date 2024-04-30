@@ -4,6 +4,7 @@ import os
 from numba import jit
 import concurrent.futures
 import time
+import yaml
 
 from joblib import Parallel, delayed
 from tqdm import tqdm
@@ -90,7 +91,7 @@ def compute_gaussian_likelihood(radius, decaying):
 
 
 @jit(nopython=True)
-def add_color_to_points(point2pixel, colors, segmentation, image_height, image_width, radius=2, decaying=2):
+def add_color_to_points(point2pixel, original_colors, segmentation, image_height, image_width, radius=2, decaying=2):
     """
     Arguments:
         point2pixel (np.array): A 2D array of shape (N, 2) where N is the number of points. Each row is (u, v). 
@@ -104,6 +105,7 @@ def add_color_to_points(point2pixel, colors, segmentation, image_height, image_w
     Returns:
         colors (np.array): A 2D array of shape (N, 3) where N is the number of points. The index is the sequence number of the point and the value is the color.
     """
+    colors = original_colors.copy()
     # precompute likelihoods
     likelihoods = compute_gaussian_likelihood(radius, decaying)
 
@@ -146,6 +148,7 @@ class PointcloudProjection(DepthImageRendering):
         self.sfm_software = None
         self.tri_mesh = None
         self.depth_filtering_threshold= depth_filtering_threshold
+        self.image_patch_data = None
 
     def read_pointcloud(self, pointcloud_path):
         """
@@ -158,7 +161,7 @@ class PointcloudProjection(DepthImageRendering):
             self.colors = self.colors / 256
             
 
-    def read_camera_parameters(self, camera_parameters_path, additional_camera_parameters_path=None):
+    def read_camera_parameters(self, camera_parameters_path, additional_camera_parameters_path=None, image_patch_path=None):
         """
         Arguments:
             camera_parameters_path (str): Path to the camera parameters file.
@@ -177,6 +180,21 @@ class PointcloudProjection(DepthImageRendering):
         self.image_height = self.cameras['height']
         self.image_width = self.cameras['width']
 
+        if image_patch_path is not None:
+            # assert if the file exists
+            assert os.path.exists(image_patch_path), 'Image patches path does not exist.'
+            with open(image_patch_path, 'r') as f:
+                self.image_patch_data = yaml.load(f, Loader=yaml.FullLoader)
+
+
+            self.overlap = self.image_patch_data['overlap']  # by pixel
+            self.N = self.image_patch_data['N']
+
+            self.patch_height = int((self.image_height - self.overlap) / self.N + self.overlap)
+            self.patch_width = int((self.image_width - self.overlap) / self.N + self.overlap)
+
+        
+
     def read_segmentation(self, segmentation_path):
         """
         Arguments:
@@ -185,10 +203,10 @@ class PointcloudProjection(DepthImageRendering):
         assert os.path.exists(segmentation_path), 'Segmentation path does not exist.'
         self.segmentation = np.load(segmentation_path)  # for adding color to points
    
-    def project(self, frame_key):
+    def project(self, frame_key, i=None, j=None):
         """
         Arguments:
-            frame_key (str): The key of the camera frame to be projected onto.
+            frame_key (str): The original image names to be projected onto. E.g., 'DJI_0313.JPG'.
             depth_filtering_threshold (float): The threshold for depth filtering. depth_point (> depth_mesh + depth_filtering_threshold) will be filtered out.
         """
         assert self.tri_mesh is not None, 'Please read the mesh first.'
@@ -222,99 +240,49 @@ class PointcloudProjection(DepthImageRendering):
             depth_mesh = self.render_depth_image(frame_key)
             z_buffer = depth_mesh + self.depth_filtering_threshold
 
-        # Update image and get associations
-        image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
+        if self.image_patch_data is not None:
+            assert (i != None) and (j != None), 'Please provide the patch indices.'
+            mask = np.zeros((self.image_height, self.image_width), dtype=bool)
+            mask[i*self.patch_height - i*self.overlap:(i+1)*self.patch_height - i*self.overlap, j*self.patch_width - j*self.overlap:(j+1)*self.patch_width - j*self.overlap] = True
+            z_buffer[~mask] = -np.inf
+            image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
 
-        return image, pixel2point, point2pixel 
+        else:
+            # Update image and get associations
+            image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
+
+
+        return image, pixel2point, point2pixel
     
-    def batch_project(self, frame_keys, save_folder_path):
-        """
-        Arguments:
-            frame_keys (list): A list of frame keys. 
-            save_folder_path (str): The path to save the images.
-        """
-        if not os.path.exists(save_folder_path):
-            os.makedirs(save_folder_path)
 
-        pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
-        if not os.path.exists(pixel2point_folder_path):
-            os.makedirs(pixel2point_folder_path)
-
-        point2pixel_folder_path = os.path.join(save_folder_path, 'point2pixel')
-        if not os.path.exists(point2pixel_folder_path):
-            os.makedirs(point2pixel_folder_path)
-
-        total = len(frame_keys)
-        for i, frame_key in enumerate(frame_keys):
-            print('Processing {}/{}: {}'.format(i+1, total, frame_key))
-            t1 = time.time()
-            image, pixel2point, point2pixel = self.project(frame_key)
-            t2 = time.time()
-            print('Time for projection: ', t2 - t1)
-
-            # save pixel2point as npy
-            pixel2point_path = os.path.join(pixel2point_folder_path, frame_key[:-4] + '.npy')
-            np.save(pixel2point_path, pixel2point)
-            # save point2pixel as npy
-            point2pixel_path = os.path.join(point2pixel_folder_path, frame_key[:-4] + '.npy')
-            np.save(point2pixel_path, point2pixel)
-
-    def process_frame(self, frame_key, save_folder_path):
-        print('Processing: {}'.format(frame_key))
+    def process_frame(self, file_name, save_folder_path):
+        print('Processing: {}'.format(file_name))
         t1 = time.time()
-        image, pixel2point, point2pixel = self.project(frame_key)
+        if self.image_patch_data is not None:
+            frame_key = '_'.join(file_name.split('_')[:-2]) + '.JPG'
+            i = int(file_name.split('_')[-2])
+            j = int(file_name.split('_')[-1][:-4])
+            image, pixel2point, point2pixel = self.project(frame_key, i, j)
+
+        else:
+            image, pixel2point, point2pixel = self.project(file_name)
+            
         t2 = time.time()
         print('Time for projection: ', t2 - t1)
 
         pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
-        if not os.path.exists(pixel2point_folder_path):
-            os.makedirs(pixel2point_folder_path)
 
         point2pixel_folder_path = os.path.join(save_folder_path, 'point2pixel')
-        if not os.path.exists(point2pixel_folder_path):
-            os.makedirs(point2pixel_folder_path)
 
         # save pixel2point as npy
-        pixel2point_path = os.path.join(pixel2point_folder_path, frame_key[:-4] + '.npy')
+        pixel2point_path = os.path.join(pixel2point_folder_path, file_name[:-4] + '.npy')
         np.save(pixel2point_path, pixel2point)
         # save point2pixel as npy
-        point2pixel_path = os.path.join(point2pixel_folder_path, frame_key[:-4] + '.npy')
+        point2pixel_path = os.path.join(point2pixel_folder_path, file_name[:-4] + '.npy')
         np.save(point2pixel_path, point2pixel)
 
         return point2pixel
 
-    def parallel_batch_project(self, frame_keys, save_folder_path, num_workers=8):
-        """
-        Execute the processing of frames in parallel using multiprocessing.
-
-        Arguments:
-            frame_keys (list): A list of frame keys.
-            save_folder_path (str): The path to save the images.
-        """
-        if not os.path.exists(save_folder_path):
-            os.makedirs(save_folder_path)
-
-        with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(self.process_frame, frame_key, save_folder_path) 
-                       for frame_key in frame_keys]
-
-            try:
-                for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                    # Process results or handle exceptions if any
-                    print(f'Task {i+1}/{len(frame_keys)} completed')
-
-            except KeyboardInterrupt:
-                print("Interrupted by user, cancelling tasks...")
-                # futures cancellation if needed
-            except Exception as e:
-                print(f"An error occurred: {e}")
-            finally:
-                print("Executor shut down.")
-
-    def process_frame_joblib(self, frame_key, save_folder_path):
-        # This is a wrapper for the original `process_frame` method, adapted for use with joblib.
-        # It's essentially the same as `process_frame` but could be adjusted if needed.
-        return self.process_frame(frame_key, save_folder_path)
     
     def parallel_batch_project_joblib(self, frame_keys, save_folder_path, num_workers=8):
         """
@@ -328,61 +296,21 @@ class PointcloudProjection(DepthImageRendering):
         if not os.path.exists(save_folder_path):
             os.makedirs(save_folder_path)
 
+        pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
+        if not os.path.exists(pixel2point_folder_path):
+            os.makedirs(pixel2point_folder_path)
+
+        point2pixel_folder_path = os.path.join(save_folder_path, 'point2pixel')
+        if not os.path.exists(point2pixel_folder_path):
+            os.makedirs(point2pixel_folder_path)
+
         # Wrap the iterable (frame_keys) with tqdm for the progress bar
         # tqdm provides a description and the total count for better progress visibility
         tasks = tqdm(frame_keys, desc="Processing frames", total=len(frame_keys))
 
         # Use Joblib for parallel processing with the tqdm-wrapped iterable
         Parallel(n_jobs=num_workers)(
-            delayed(self.process_frame_joblib)(frame_key, save_folder_path) for frame_key in tasks)
-
-    def build_associations_keyimage(self, read_folder_path, segmentation_folder_path):
-        """
-        Arguments:
-            read_folder_path (str): The path to the folder containing the point2pixel files.
-            pixel2point_folder_path (str): The path to the folder containing the pixel2point files.
-            segmentation_folder_path (str): The path to the folder containing the segmentation files.
-        """
-        pixel2point_folder_path = os.path.join(read_folder_path, 'pixel2point')
-        assert os.path.exists(pixel2point_folder_path), 'Pixel2point folder path does not exist.'
-        pixel2point_file_paths = [os.path.join(pixel2point_folder_path, f) for f in os.listdir(pixel2point_folder_path) if f.endswith('.npy')]
-        pixel2point_file_paths.sort()
-        N_images = len(pixel2point_file_paths)
-        
-        # get the number of points
-        point2pixel_folder_path = os.path.join(read_folder_path, 'point2pixel')  
-        assert os.path.exists(point2pixel_folder_path), 'Point2pixel folder path does not exist.'  
-        point2pixel_file_paths = [os.path.join(point2pixel_folder_path, f) for f in os.listdir(point2pixel_folder_path) if f.endswith('.npy')]  
-        point2pixel = np.load(point2pixel_file_paths[0])
-        N_points = point2pixel.shape[0]
-
-        assert os.path.exists(segmentation_folder_path), 'Segmentation folder path does not exist.'
-        segmentation_file_paths = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if f.endswith('.npy')]
-        segmentation_file_paths.sort()
-
-        # check if the number of images is the same
-        assert len(segmentation_file_paths) == N_images, 'The number of images is not the same as the number of segmentation files.'
-        segmentation_pixel2point_pairs = []
-        for i in range(len(segmentation_file_paths)):
-            segmentation_file_path = segmentation_file_paths[i]
-            pixel2point_file_path = pixel2point_file_paths[i]
-            # check if the base of the file name is the same
-            assert os.path.basename(segmentation_file_path)[:-4] == os.path.basename(pixel2point_file_path)[:-4], 'The base of the file name is not the same.'
-            segmentation_pixel2point_pairs.append((segmentation_file_path, pixel2point_file_path))
-        
-        # build associations
-        associations_keyimage = np.full((N_points, N_images), False, dtype=bool)
-
-        for i in range(len(point2pixel_file_paths)):
-            segmentation = np.load(segmentation_pixel2point_pairs[i][0])
-            pixel2point = np.load(segmentation_pixel2point_pairs[i][1])
-            pixel2point[segmentation == -1] = -1
-            valid_point_ids = pixel2point[pixel2point != -1]
-            associations_keyimage[valid_point_ids, i] = True
-
-        # save associations
-        save_file_path = os.path.join(read_folder_path, 'associations_keyimage.npy')
-        np.save(save_file_path, associations_keyimage)
+            delayed(self.process_frame)(frame_key, save_folder_path) for frame_key in tasks)
 
 
 if __name__ == "__main__":
@@ -390,10 +318,10 @@ if __name__ == "__main__":
     import time
     site = 'box_canyon'
 
-    flag = True  # True: project semantics from one image to the point cloud.
-    batch_flag = False  # True: save the associations of all images in sequence.
+    flag = False  # True: project semantics from one image to the point cloud.
     Parallel_batch_flag = False # True: save the associations of all images in parallel.
-    keyimage_flag = False  # True: build associations_keyimage.npy
+    Parallel_batch_patch_flag = False  # True: save the associations of all patches in parallel.
+    patch_flag = True # True: project semantics from one image path to the point cloud.
 
     if flag:
         if site == 'box_canyon':
@@ -454,56 +382,44 @@ if __name__ == "__main__":
         pass
 
 
-    if batch_flag:
-        # project the point cloud
-        pointcloud_projector = PointcloudProjection()
-        pointcloud_projector.read_pointcloud('../../data/model.las')
-        pointcloud_projector.read_camera_parameters('../../data/camera.json', '../../data/shots.geojson')
+    if Parallel_batch_patch_flag:
+        pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.2)
+        pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml', 
+                                                    image_patch_path='../../data/box_canyon_park/DJI_photos_split/image_patches.yaml')
+        pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
+        pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
 
-        # batch project
-        image_folder_path = '../../data/mission_2'
-        save_folder_path = '../../data/mission_2_associations_'
+        image_folder_path = '../../data/box_canyon_park/DJI_photos_split'
+        save_folder_path = '../../data/box_canyon_park/associations'
 
-        image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
-        pointcloud_projector.batch_project(image_list, save_folder_path)
+        file_name_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+        pointcloud_projector.parallel_batch_project_joblib(file_name_list, save_folder_path)
 
-    else:
-        pass
+    if patch_flag:
+        radius = 2
+        decaying = 2
 
+        pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.2)
+        pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml', 
+                                                    image_patch_path='../../data/box_canyon_park/DJI_photos_split/image_patches.yaml')
+        pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
+        pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
 
-    if Parallel_batch_flag:
-        if site == 'box_canyon':
-            # project the point cloud
-            pointcloud_projector = PointcloudProjection()
-            pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/model.las')
-            pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/camera.json', '../../data/box_canyon_park/SfM_products/shots.geojson')
+        pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0183.npy')
 
-            # batch project
-            image_folder_path = '../../data/box_canyon_park/DJI_photos'
-            save_folder_path = '../../data/box_canyon_park/associations'
+        image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG', 0, 1)
+        colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+        write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/183_0_1_depth_filter_segmentation.las")
 
-            image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
-            pointcloud_projector.parallel_batch_project(image_list, save_folder_path)
+        image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG', 0, 0)
+        colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+        write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/183_0_0_depth_filter_segmentation.las")
 
-        elif site == 'courtwright':
-            # project the point cloud
-            pointcloud_projector = PointcloudProjection()
-            pointcloud_projector.read_pointcloud('../../data/courtwright/courtwright.las')
-            pointcloud_projector.read_camera_parameters('../../data/courtwright/cameras.json', '../../data/courtwright/shots.geojson')
+        image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG', 1, 0)
+        colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+        write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/183_1_0_depth_filter_segmentation.las")
 
-            # batch project
-            image_folder_path = '../../data/courtwright/photos'
-            save_folder_path = '../../data/courtwright/associations'
+        image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG', 1, 1)
+        colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+        write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/183_1_1_depth_filter_segmentation.las")
 
-            image_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
-            pointcloud_projector.parallel_batch_project(image_list, save_folder_path)
-
-    else:
-        pass
-
-    if keyimage_flag:
-        pointcloud_projector = PointcloudProjection()
-        t1 = time.time()
-        pointcloud_projector.build_associations_keyimage('../../data/mission_2_associations_parallel', '../../data/mission_2_segmentations')
-        t2 = time.time()
-        print('Time for building associations: ', t2 - t1)

@@ -69,6 +69,7 @@ class ImageSegmentation(object):
             points_per_side = configs['points_per_side']
             pred_iou_thresh = configs['pred_iou_thresh']
             stability_score_thresh = configs['stability_score_thresh']
+            crop_n_layers = configs['crop_n_layers']
 
             self.sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
             self.sam.to(device=device)
@@ -77,7 +78,8 @@ class ImageSegmentation(object):
                 model=self.sam, 
                 points_per_side=points_per_side,
                 pred_iou_thresh=pred_iou_thresh,
-                stability_score_thresh=stability_score_thresh
+                stability_score_thresh=stability_score_thresh,
+                crop_n_layers = crop_n_layers
             )
 
         self.distortion_params = None
@@ -228,9 +230,10 @@ sam_params['device'] = 'cuda:2'
 sam_params['points_per_side'] = 64
 sam_params['pred_iou_thresh'] = 0.96
 sam_params['stability_score_thresh'] = 0.92
+sam_params['crop_n_layers'] = 2
 
 if __name__ == '__main__':
-    site = "box_canyon" # "box_canyon" or "courtwright
+    site = "courtwright" # "box_canyon" or "courtwright
     single_test = True
     batch_test = False
     write_segmentation_test = False  
@@ -250,6 +253,8 @@ if __name__ == '__main__':
         image = cv2.resize(image, (1000, 666))
         masks = image_segmentor.predict(image_path)
         image_segmentor.save_overlap(image, masks, '../../data/courtright/test.png')
+
+        """
         # split image to 4 parts
         img1 = image[0:333, 0:500]
         img2 = image[0:333, 500:1000]
@@ -270,6 +275,7 @@ if __name__ == '__main__':
         image_segmentor.save_overlap(img2, masks2, '../../data/courtright/test2.png')
         image_segmentor.save_overlap(img3, masks3, '../../data/courtright/test3.png')
         image_segmentor.save_overlap(img4, masks4, '../../data/courtright/test4.png')
+        """
         
 
     

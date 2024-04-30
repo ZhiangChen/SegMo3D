@@ -7,6 +7,7 @@ import time
 import numpy as np
 from collections import defaultdict
 import logging
+import yaml
 
 def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path):
     """
@@ -181,10 +182,18 @@ def numba_update_pc_segmentation(associations1_point2pixel, segmented_objects_im
 
 
 class ObjectRegistration(object):
-    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path):
+    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, keyimage_yaml_name=None, image_patch_path=None):
         self.pointcloud_path = pointcloud_path
         self.segmentation_folder_path = segmentation_folder_path
         self.association_folder_path = association_folder_path
+        self.image_patch_path = image_patch_path
+
+        if self.image_patch_path is not None:
+            assert os.path.exists(self.image_patch_path), 'Image patch path does not exist.'
+            with open(self.image_patch_path, 'r') as f:
+                image_patch_data = yaml.load(f, Loader=yaml.FullLoader)
+                self.N = image_patch_data['N']  # number of patches in each row and column
+                self.overlap = image_patch_data['overlap']  # overlap between patches (in pixels)
 
         logging.basicConfig(filename="object_registration.log", 
                             format='%(asctime)s %(message)s', 
@@ -199,32 +208,57 @@ class ObjectRegistration(object):
             header = las_file.header
             self.N_points = header.point_count
 
-
-        # Load segmentation files (.npy) and sort them
-        # check if the folder exists
-        assert os.path.exists(self.segmentation_folder_path), 'Segmentation folder path does not exist.'
-        self.segmentation_file_paths = [os.path.join(self.segmentation_folder_path, f) for f in os.listdir(self.segmentation_folder_path) if f.endswith('.npy')]
-        self.segmentation_file_paths.sort()   
-
         # load keyimage association files (.npy)
-        keyimage_association_file_path = os.path.join(self.association_folder_path, 'associations_keyimage.npy')
-        assert os.path.exists(keyimage_association_file_path), 'Keyimage association file path does not exist.'
-        self.keyimage_associations = np.load(keyimage_association_file_path, allow_pickle=True)
+        if keyimage_associations_file_name is None:
+            keyimage_associations_file_path = os.path.join(self.association_folder_path, 'associations_keyimage.npy')
+            assert os.path.exists(keyimage_associations_file_path), 'Keyimage association file path does not exist.'
+            self.keyimage_associations = np.load(keyimage_associations_file_path, allow_pickle=True)
+        else:
+            keyimage_associations_file_path = os.path.join(self.association_folder_path, keyimage_associations_file_name)
+            assert os.path.exists(keyimage_associations_file_path), 'Keyimage association file path does not exist.'
+            self.keyimage_associations = np.load(keyimage_associations_file_path, allow_pickle=True)
 
 
         # Load pixel2point association files (.npy) and sort them
-        # check if the folder exists
-        self.associations_pixel2point_path = os.path.join(self.association_folder_path, 'pixel2point')
-        assert os.path.exists(self.associations_pixel2point_path), 'Association pixel2point folder path does not exist.'
-        self.associations_pixel2point_file_paths = [os.path.join(self.associations_pixel2point_path, f) for f in os.listdir(self.associations_pixel2point_path) if f.endswith('.npy')]
-        self.associations_pixel2point_file_paths.sort()
+        if keyimage_yaml_name is None:
+            # check if the folder exists
+            self.associations_pixel2point_path = os.path.join(self.association_folder_path, 'pixel2point')
+            assert os.path.exists(self.associations_pixel2point_path), 'Association pixel2point folder path does not exist.'
+            self.associations_pixel2point_file_paths = [os.path.join(self.associations_pixel2point_path, f) for f in os.listdir(self.associations_pixel2point_path) if f.endswith('.npy')]
+            self.associations_pixel2point_file_paths.sort()
 
-        # Load point2pixel association files (.npy) and sort them
-        # check if the folder exists
-        self.associations_point2pixel_path = os.path.join(self.association_folder_path, 'point2pixel')
-        assert os.path.exists(self.associations_point2pixel_path), 'Association point2pixel folder path does not exist.'
-        self.associations_point2pixel_file_paths = [os.path.join(self.associations_point2pixel_path, f) for f in os.listdir(self.associations_point2pixel_path) if f.endswith('.npy')]
-        self.associations_point2pixel_file_paths.sort()
+            # Load point2pixel association files (.npy) and sort them
+            # check if the folder exists
+            self.associations_point2pixel_path = os.path.join(self.association_folder_path, 'point2pixel')
+            assert os.path.exists(self.associations_point2pixel_path), 'Association point2pixel folder path does not exist.'
+            self.associations_point2pixel_file_paths = [os.path.join(self.associations_point2pixel_path, f) for f in os.listdir(self.associations_point2pixel_path) if f.endswith('.npy')]
+            self.associations_point2pixel_file_paths.sort()
+
+            # Load segmentation files (.npy) and sort them
+            # check if the folder exists
+            assert os.path.exists(self.segmentation_folder_path), 'Segmentation folder path does not exist.'
+            self.segmentation_file_paths = [os.path.join(self.segmentation_folder_path, f) for f in os.listdir(self.segmentation_folder_path) if f.endswith('.npy')]
+            self.segmentation_file_paths.sort()   
+
+        else:
+            keyimage_yaml_path = os.path.join(self.association_folder_path, keyimage_yaml_name)
+            assert os.path.exists(keyimage_yaml_path), 'Keyimage yaml path does not exist.'
+            with open(keyimage_yaml_path, 'r') as file:
+                keyimage_list = yaml.load(file, Loader=yaml.FullLoader)
+            
+            self.associations_pixel2point_path = os.path.join(self.association_folder_path, 'pixel2point')
+            assert os.path.exists(self.associations_pixel2point_path), 'Association pixel2point folder path does not exist.'
+            associations_pixel2point_files = [f for f in os.listdir(self.associations_pixel2point_path) if f.endswith('.npy')]
+            self.associations_pixel2point_file_paths = [os.path.join(self.associations_pixel2point_path, f) for f in keyimage_list if f in associations_pixel2point_files]
+
+            self.associations_point2pixel_path = os.path.join(self.association_folder_path, 'point2pixel')
+            assert os.path.exists(self.associations_point2pixel_path), 'Association point2pixel folder path does not exist.'
+            associations_point2pixel_files = [f for f in os.listdir(self.associations_point2pixel_path) if f.endswith('.npy')]
+            self.associations_point2pixel_file_paths = [os.path.join(self.associations_point2pixel_path, f) for f in keyimage_list if f in associations_point2pixel_files]
+
+            assert os.path.exists(self.segmentation_folder_path), 'Segmentation folder path does not exist.'
+            segmentation_files = [f for f in os.listdir(self.segmentation_folder_path) if f.endswith('.npy')]
+            self.segmentation_file_paths = [os.path.join(self.segmentation_folder_path, f) for f in keyimage_list if f in segmentation_files]
 
         # Check if the number of segmentation files and association files are the same
         assert len(self.segmentation_file_paths) == len(self.associations_pixel2point_file_paths), 'The number of segmentation files and pixel2point association files are not the same.'
@@ -492,7 +526,25 @@ class ObjectRegistration(object):
             associations_pixel2point_file_path = self.segmentation_association_pairs[image_id][1]
             associations_point2pixel_file_path = self.segmentation_association_pairs[image_id][2]
 
-            segmented_objects_image1 = np.load(segmentation_file_path, allow_pickle=True).astype(np.int16)
+            patch_segmentation = np.load(segmentation_file_path, allow_pickle=True).astype(np.int16)
+            if self.image_patch_path is not None:
+                # get patch height and width
+                patch_height, patch_width = patch_segmentation.shape
+                # calculate the height and width of the image
+                height = patch_height * self.N - (self.N - 1) * self.overlap
+                width = patch_width * self.N - (self.N - 1) * self.overlap
+                # create a segmentation image
+                segmented_objects_image1 = np.full((height, width), -1, dtype=np.int16)
+                # get i, j coordinates from the segmentation file name
+                file_name = os.path.basename(segmentation_file_path)
+                i = int(file_name.split('_')[-2])
+                j = int(file_name.split('_')[-1][:-4])
+                # put the patch segmentation into the segmentation image
+                segmented_objects_image1[i*patch_height - i*self.overlap:(i+1)*patch_height - i*self.overlap, j*patch_width - j*self.overlap:(j+1)*patch_width - j*self.overlap] = patch_segmentation
+            else:
+                segmented_objects_image1 = patch_segmentation
+
+
             associations1_pixel2point = np.load(associations_pixel2point_file_path, allow_pickle=True)
             associations1_point2pixel = np.load(associations_point2pixel_file_path, allow_pickle=True)
 

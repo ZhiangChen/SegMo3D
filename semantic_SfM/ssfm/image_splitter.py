@@ -2,6 +2,7 @@ import os
 import cv2
 import yaml
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 class ImageSplitter(object):
     def __init__(self, image_folder_path) -> None:
@@ -14,24 +15,36 @@ class ImageSplitter(object):
         # print the number of images found in the path
         print(f"Found {len(self.image_files)} images in the folder {image_folder_path}")
 
-        # create a yaml file to store the image paths and the corresponding patches
-        self.yaml_file = os.path.join(image_folder_path, "image_patches.yaml")
-        if os.path.exists(self.yaml_file):
-            # read the yaml file
-            with open(self.yaml_file, 'r') as f:
-                self.data = yaml.load(f, Loader=yaml.FullLoader)
-            
-            # print success message
-            print(f"Read the yaml file {self.yaml_file}")
 
-        else:
-            self.data = {}
-
-
-    def split(self, N, overlap, image_write_folder_path):
+    def process_image(self, image_f):
         """
         Split the image into N x N patches with overlap
+        """
+        image = cv2.imread(image_f)
+        image_name = os.path.basename(image_f)
+        image_name = image_name.split('.')[0]
 
+        # get the height and width of the image
+        height, width = image.shape[:2]
+
+        # get the patch height and width
+        patch_height = int((height - self.overlap) / self.N + self.overlap)
+        patch_width = int((width - self.overlap) / self.N + self.overlap)
+
+        # split the image into patches
+        for i in range(self.N):
+            for j in range(self.N):
+                # get the patch, considering overlap
+                patch = image[i*patch_height - i*self.overlap:(i+1)*patch_height - i*self.overlap, j*patch_width - j*self.overlap:(j+1)*patch_width - j*self.overlap]
+
+                # write the patch to the folder
+                patch_name = f"{image_name}_{i}_{j}.JPG"
+                patch_path = os.path.join(self.image_write_folder_path, patch_name)
+                cv2.imwrite(patch_path, patch)
+
+
+    def split(self, N, overlap, image_write_folder_path, num_workers=8):
+        """
         Args:
             N (int): Number of patches in each row and column
             overlap (int): Overlap between patches (in pixels)
@@ -40,47 +53,26 @@ class ImageSplitter(object):
         if not os.path.exists(image_write_folder_path):
             os.makedirs(image_write_folder_path)
 
-        # put N and overlap in the yaml file
+        self.N = N
+        self.overlap = overlap
+        self.image_write_folder_path = image_write_folder_path
+
+        self.data = {}
+
         self.data['N'] = N
         self.data['overlap'] = overlap
 
-        for image_f in tqdm(self.image_files, desc='Processing Images'):
-            image = cv2.imread(image_f)
-            image_name = os.path.basename(image_f)
-            image_name = image_name.split('.')[0]
 
-            # get the height and width of the image
-            height, width = image.shape[:2]
-
-            # get the patch height and width
-            patch_height = int((height - overlap) / N + overlap)
-            patch_width = int((width - overlap) / N + overlap)
-
+        with tqdm(total=len(self.image_files), desc='Processing Images') as progress_bar:
+            Parallel(n_jobs=num_workers)(
+                delayed(self.process_image)(image_f)
+                for image_f in self.image_files
+            )
+            progress_bar.update(len(self.image_files))
             
-            if not os.path.exists(image_write_folder_path):
-                os.makedirs(image_write_folder_path)
-
-
-            # split the image into patches
-            for i in range(N):
-                for j in range(N):
-                    # get the patch, considering overlap
-                    patch = image[i*patch_height - i*overlap:(i+1)*patch_height - i*overlap, j*patch_width - j*overlap:(j+1)*patch_width - j*overlap]
-
-                    # write the patch to the folder
-                    patch_name = f"{image_name}_{i}_{j}.png"
-                    patch_path = os.path.join(image_write_folder_path, patch_name)
-                    cv2.imwrite(patch_path, patch)
-
-                    # store the patch path in the yaml file
-                    if image_name not in self.data:
-                        self.data[image_name] = {}
-                    self.data[image_name][f"{i}_{j}"] = patch_path
-
-        # write the yaml file
+        self.yaml_file = os.path.join(image_write_folder_path, 'image_patches.yaml')
         with open(self.yaml_file, 'w') as f:
             yaml.dump(self.data, f)
-
         print(f"Image patches are written to {image_write_folder_path}")
 
 if __name__ == "__main__":
@@ -91,5 +83,5 @@ if __name__ == "__main__":
     overlap = 0 
 
     image_splitter = ImageSplitter(image_folder_path)
-    image_splitter.split(N, overlap, image_write_folder_path)
+    image_splitter.split(N, overlap, image_write_folder_path, num_workers=8)
 
