@@ -182,18 +182,10 @@ def numba_update_pc_segmentation(associations1_point2pixel, segmented_objects_im
 
 
 class ObjectRegistration(object):
-    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, keyimage_yaml_name=None, image_patch_path=None):
+    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, keyimage_yaml_name=None):
         self.pointcloud_path = pointcloud_path
         self.segmentation_folder_path = segmentation_folder_path
         self.association_folder_path = association_folder_path
-        self.image_patch_path = image_patch_path
-
-        if self.image_patch_path is not None:
-            assert os.path.exists(self.image_patch_path), 'Image patch path does not exist.'
-            with open(self.image_patch_path, 'r') as f:
-                image_patch_data = yaml.load(f, Loader=yaml.FullLoader)
-                self.N = image_patch_data['N']  # number of patches in each row and column
-                self.overlap = image_patch_data['overlap']  # overlap between patches (in pixels)
 
         logging.basicConfig(filename="object_registration.log", 
                             format='%(asctime)s %(message)s', 
@@ -468,6 +460,7 @@ class ObjectRegistration(object):
         """
         segmented_objects_image2 = self.segmented_objects_images[key_image]
         object_ids_object1_image2 = segmented_objects_image2[pixel_object1_image2[:, 0], pixel_object1_image2[:, 1]]
+        #logging.info('    object_ids_object1_image2: {}'.format(object_ids_object1_image2))
         unique_ids, counts = np.unique(object_ids_object1_image2, return_counts=True)
         max_count_id = unique_ids[np.argmax(counts)]
         pixel_object2_image2 = np.argwhere(segmented_objects_image2 == max_count_id)
@@ -526,25 +519,7 @@ class ObjectRegistration(object):
             associations_pixel2point_file_path = self.segmentation_association_pairs[image_id][1]
             associations_point2pixel_file_path = self.segmentation_association_pairs[image_id][2]
 
-            patch_segmentation = np.load(segmentation_file_path, allow_pickle=True).astype(np.int16)
-            if self.image_patch_path is not None:
-                # get patch height and width
-                patch_height, patch_width = patch_segmentation.shape
-                # calculate the height and width of the image
-                height = patch_height * self.N - (self.N - 1) * self.overlap
-                width = patch_width * self.N - (self.N - 1) * self.overlap
-                # create a segmentation image
-                segmented_objects_image1 = np.full((height, width), -1, dtype=np.int16)
-                # get i, j coordinates from the segmentation file name
-                file_name = os.path.basename(segmentation_file_path)
-                i = int(file_name.split('_')[-2])
-                j = int(file_name.split('_')[-1][:-4])
-                # put the patch segmentation into the segmentation image
-                segmented_objects_image1[i*patch_height - i*self.overlap:(i+1)*patch_height - i*self.overlap, j*patch_width - j*self.overlap:(j+1)*patch_width - j*self.overlap] = patch_segmentation
-            else:
-                segmented_objects_image1 = patch_segmentation
-
-
+            segmented_objects_image1 = np.load(segmentation_file_path, allow_pickle=True).astype(np.int16)
             associations1_pixel2point = np.load(associations_pixel2point_file_path, allow_pickle=True)
             associations1_point2pixel = np.load(associations_point2pixel_file_path, allow_pickle=True)
 

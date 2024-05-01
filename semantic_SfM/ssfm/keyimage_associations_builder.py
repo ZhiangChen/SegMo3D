@@ -42,47 +42,16 @@ class KeyimageAssociationsBuilder(object):
             assert os.path.basename(segmentation_file_path)[:-4] == os.path.basename(pixel2point_file_path)[:-4], 'The base of the file name is not the same.'
             self.segmentation_pixel2point_pairs.append((segmentation_file_path, pixel2point_file_path))
 
-    def build_associations(self, image_patch_path=None):
+    def build_associations(self):
         # build associations
         self.associations_keyimage = np.full((self.N_points, self.N_images), False, dtype=bool)
 
-        if image_patch_path is None:
-            for k in tqdm(range(len(self.point2pixel_file_paths))):
-                segmentation = np.load(self.segmentation_pixel2point_pairs[k][0])
-                pixel2point = np.load(self.segmentation_pixel2point_pairs[k][1])
-                pixel2point[segmentation == -1] = -1
-                valid_point_ids = pixel2point[pixel2point != -1]
-                self.associations_keyimage[valid_point_ids, k] = True
-        else:
-            assert os.path.exists(image_patch_path), 'Image patch path does not exist.'
-            with open(image_patch_path, 'r') as f:
-                image_patch_data = yaml.load(f, Loader=yaml.FullLoader)
-            
-            N = image_patch_data['N']  # number of patches in each row and column
-            overlap = image_patch_data['overlap']  # overlap between patches (in pixels)
-
-            for k in tqdm(range(len(self.point2pixel_file_paths))):
-                patch_segmentation = np.load(self.segmentation_pixel2point_pairs[k][0])
-                # get patch height and width
-                patch_height, patch_width = patch_segmentation.shape
-                # calculate the height and width of the image
-                height = patch_height * N - (N - 1) * overlap
-                width = patch_width * N - (N - 1) * overlap
-                # create a segmentation image
-                segmentation = np.full((height, width), -1, dtype=np.int16)
-                # get i, j coordinates from the segmentation file name
-                file_name = os.path.basename(self.segmentation_pixel2point_pairs[k][0])
-                i = int(file_name.split('_')[-2])
-                j = int(file_name.split('_')[-1][:-4])
-                # put the patch segmentation into the segmentation image
-                segmentation[i*patch_height - i*overlap:(i+1)*patch_height - i*overlap, j*patch_width - j*overlap:(j+1)*patch_width - j*overlap] = patch_segmentation
-
-                pixel2point = np.load(self.segmentation_pixel2point_pairs[k][1])
-                pixel2point[segmentation == -1] = -1
-                valid_point_ids = pixel2point[pixel2point != -1]
-                self.associations_keyimage[valid_point_ids, k] = True
-
-                
+        for k in tqdm(range(len(self.point2pixel_file_paths))):
+            segmentation = np.load(self.segmentation_pixel2point_pairs[k][0])
+            pixel2point = np.load(self.segmentation_pixel2point_pairs[k][1])
+            pixel2point[segmentation == -1] = -1
+            valid_point_ids = pixel2point[pixel2point != -1]
+            self.associations_keyimage[valid_point_ids, k] = True
 
         # save associations
         save_file_path = os.path.join(self.read_folder_path, 'associations_keyimage.npy')
@@ -94,8 +63,6 @@ class KeyimageAssociationsBuilder(object):
         with open(save_file_path, 'w') as f:
             yaml.dump(image_file_names, f)
         
-
-
     def read_associations(self, associations_keyimage_file_path=None):
         """
         Read the associations_keyimage file
@@ -109,6 +76,9 @@ class KeyimageAssociationsBuilder(object):
         
         # print the associations are loaded
         print(f"Loaded associations keyimage file from {associations_keyimage_file_path}")
+
+        # assert the number of images is the same
+        assert self.associations_keyimage.shape[1] == len(self.segmentation_file_paths), 'The number of images is not the same as the number of segmentation files.'
     
     def find_min_cover(self):
         """

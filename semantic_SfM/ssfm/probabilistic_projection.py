@@ -148,7 +148,6 @@ class PointcloudProjection(DepthImageRendering):
         self.sfm_software = None
         self.tri_mesh = None
         self.depth_filtering_threshold= depth_filtering_threshold
-        self.image_patch_data = None
 
     def read_pointcloud(self, pointcloud_path):
         """
@@ -161,7 +160,7 @@ class PointcloudProjection(DepthImageRendering):
             self.colors = self.colors / 256
             
 
-    def read_camera_parameters(self, camera_parameters_path, additional_camera_parameters_path=None, image_patch_path=None):
+    def read_camera_parameters(self, camera_parameters_path, additional_camera_parameters_path=None):
         """
         Arguments:
             camera_parameters_path (str): Path to the camera parameters file.
@@ -179,20 +178,6 @@ class PointcloudProjection(DepthImageRendering):
         self.camera_intrinsics = self.cameras['K'] 
         self.image_height = self.cameras['height']
         self.image_width = self.cameras['width']
-
-        if image_patch_path is not None:
-            # assert if the file exists
-            assert os.path.exists(image_patch_path), 'Image patches path does not exist.'
-            with open(image_patch_path, 'r') as f:
-                self.image_patch_data = yaml.load(f, Loader=yaml.FullLoader)
-
-
-            self.overlap = self.image_patch_data['overlap']  # by pixel
-            self.N = self.image_patch_data['N']
-
-            self.patch_height = int((self.image_height - self.overlap) / self.N + self.overlap)
-            self.patch_width = int((self.image_width - self.overlap) / self.N + self.overlap)
-
         
 
     def read_segmentation(self, segmentation_path):
@@ -239,18 +224,7 @@ class PointcloudProjection(DepthImageRendering):
             # Get depth image from mesh
             depth_mesh = self.render_depth_image(frame_key)
             z_buffer = depth_mesh + self.depth_filtering_threshold
-
-        if self.image_patch_data is not None:
-            assert (i != None) and (j != None), 'Please provide the patch indices.'
-            mask = np.zeros((self.image_height, self.image_width), dtype=bool)
-            mask[i*self.patch_height - i*self.overlap:(i+1)*self.patch_height - i*self.overlap, j*self.patch_width - j*self.overlap:(j+1)*self.patch_width - j*self.overlap] = True
-            z_buffer[~mask] = -np.inf
             image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
-
-        else:
-            # Update image and get associations
-            image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
-
 
         return image, pixel2point, point2pixel
     
@@ -258,15 +232,7 @@ class PointcloudProjection(DepthImageRendering):
     def process_frame(self, file_name, save_folder_path):
         print('Processing: {}'.format(file_name))
         t1 = time.time()
-        if self.image_patch_data is not None:
-            frame_key = '_'.join(file_name.split('_')[:-2]) + '.JPG'
-            i = int(file_name.split('_')[-2])
-            j = int(file_name.split('_')[-1][:-4])
-            image, pixel2point, point2pixel = self.project(frame_key, i, j)
-
-        else:
-            image, pixel2point, point2pixel = self.project(file_name)
-            
+        image, pixel2point, point2pixel = self.project(file_name)
         t2 = time.time()
         print('Time for projection: ', t2 - t1)
 
@@ -320,8 +286,6 @@ if __name__ == "__main__":
 
     flag = False  # True: project semantics from one image to the point cloud.
     Parallel_batch_flag = False # True: save the associations of all images in parallel.
-    Parallel_batch_patch_flag = False  # True: save the associations of all patches in parallel.
-    patch_flag = True # True: project semantics from one image path to the point cloud.
 
     if flag:
         if site == 'box_canyon':
@@ -382,44 +346,4 @@ if __name__ == "__main__":
         pass
 
 
-    if Parallel_batch_patch_flag:
-        pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.2)
-        pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml', 
-                                                    image_patch_path='../../data/box_canyon_park/DJI_photos_split/image_patches.yaml')
-        pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
-        pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
-
-        image_folder_path = '../../data/box_canyon_park/DJI_photos_split'
-        save_folder_path = '../../data/box_canyon_park/associations'
-
-        file_name_list = [f for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
-        pointcloud_projector.parallel_batch_project_joblib(file_name_list, save_folder_path)
-
-    if patch_flag:
-        radius = 2
-        decaying = 2
-
-        pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.2)
-        pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml', 
-                                                    image_patch_path='../../data/box_canyon_park/DJI_photos_split/image_patches.yaml')
-        pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
-        pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
-
-        pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0183.npy')
-
-        image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG', 0, 1)
-        colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
-        write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/183_0_1_depth_filter_segmentation.las")
-
-        image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG', 0, 0)
-        colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
-        write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/183_0_0_depth_filter_segmentation.las")
-
-        image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG', 1, 0)
-        colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
-        write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/183_1_0_depth_filter_segmentation.las")
-
-        image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG', 1, 1)
-        colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
-        write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/183_1_1_depth_filter_segmentation.las")
 
