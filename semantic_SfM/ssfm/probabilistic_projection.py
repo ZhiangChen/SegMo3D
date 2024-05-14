@@ -224,15 +224,16 @@ class PointcloudProjection(DepthImageRendering):
             # Get depth image from mesh
             depth_mesh = self.render_depth_image(frame_key)
             z_buffer = depth_mesh + self.depth_filtering_threshold
-            image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
+            
+        image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
 
-        return image, pixel2point, point2pixel
+        return z_buffer, pixel2point, point2pixel
     
 
-    def process_frame(self, file_name, save_folder_path):
+    def process_frame(self, file_name, save_folder_path, depth_folder_path=None):
         print('Processing: {}'.format(file_name))
         t1 = time.time()
-        image, pixel2point, point2pixel = self.project(file_name)
+        depth_image, pixel2point, point2pixel = self.project(file_name)
         t2 = time.time()
         print('Time for projection: ', t2 - t1)
 
@@ -247,10 +248,14 @@ class PointcloudProjection(DepthImageRendering):
         point2pixel_path = os.path.join(point2pixel_folder_path, file_name[:-4] + '.npy')
         np.save(point2pixel_path, point2pixel)
 
+        if depth_folder_path is not None:
+            depth_folder_path = os.path.join(depth_folder_path, file_name[:-4] + '.npy')
+            np.save(depth_folder_path, depth_image)
+
         return point2pixel
 
     
-    def parallel_batch_project_joblib(self, frame_keys, save_folder_path, num_workers=8):
+    def parallel_batch_project_joblib(self, frame_keys, save_folder_path, num_workers=8, save_depth=False):
         """
         Execute the processing of frames in parallel using joblib and display a progress bar with tqdm.
 
@@ -270,24 +275,34 @@ class PointcloudProjection(DepthImageRendering):
         if not os.path.exists(point2pixel_folder_path):
             os.makedirs(point2pixel_folder_path)
 
-        # Wrap the iterable (frame_keys) with tqdm for the progress bar
-        # tqdm provides a description and the total count for better progress visibility
-        tasks = tqdm(frame_keys, desc="Processing frames", total=len(frame_keys))
+        if save_depth:
+            depth_folder_path = os.path.join(save_folder_path, 'depth')
+            if not os.path.exists(depth_folder_path):
+                os.makedirs(depth_folder_path)
 
-        # Use Joblib for parallel processing with the tqdm-wrapped iterable
-        Parallel(n_jobs=num_workers)(
-            delayed(self.process_frame)(frame_key, save_folder_path) for frame_key in tasks)
+            # Wrap the iterable (frame_keys) with tqdm for the progress bar
+            # tqdm provides a description and the total count for better progress visibility
+            tasks = tqdm(frame_keys, desc="Processing frames", total=len(frame_keys))
+
+            # Use Joblib for parallel processing with the tqdm-wrapped iterable
+            Parallel(n_jobs=num_workers)(
+                delayed(self.process_frame)(frame_key, save_folder_path, depth_folder_path) for frame_key in tasks)
+        else:
+            tasks = tqdm(frame_keys, desc="Processing frames", total=len(frame_keys))
+
+            # Use Joblib for parallel processing with the tqdm-wrapped iterable
+            Parallel(n_jobs=num_workers)(
+                delayed(self.process_frame)(frame_key, save_folder_path) for frame_key in tasks)
 
 
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    site = 'box_canyon'
+    site = 'courtright'
 
-    flag = False  # True: project semantics from one image to the point cloud.
-    Parallel_batch_flag = False # True: save the associations of all images in parallel.
+    single_projection_flag = True  # True: project semantics from one image to the point cloud.
 
-    if flag:
+    if single_projection_flag:
         if site == 'box_canyon':
             # segment the images
             #image_segmentor = ImageSegmentation(sam_params)        
@@ -298,9 +313,10 @@ if __name__ == "__main__":
             # project the point cloud
             pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.2)
             pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml')
+            pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
             pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
             
-            pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
+            
             pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0313.npy')
             image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0313.JPG')
 
@@ -314,33 +330,30 @@ if __name__ == "__main__":
 
             write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/313_depth_filter_segmentation.las")
 
-        elif site == 'courtwright':
+        elif site == 'courtright':
             # project the point cloud
-            pointcloud_projector = PointcloudProjection()
-            #pointcloud_projector.read_camera_parameters('../../data/courtright/SfM_products/cameras.json', '../../data/courtright/SfM_products/shots.geojson')
-            #pointcloud_projector.read_pointcloud('../../data/courtright/SfM_products/model.las')
+            t0 = time.time()
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.05)
             pointcloud_projector.read_camera_parameters('../../data/courtright/SfM_products/agisoft_cameras.xml')
+            pointcloud_projector.read_mesh('../../data/courtright/SfM_products/agisoft_model.obj')
             pointcloud_projector.read_pointcloud('../../data/courtright/SfM_products/agisoft_model.las')
-            pointcloud_projector.read_segmentation('../../data/courtright/segmentations/DJI_0595.npy')
+            pointcloud_projector.read_segmentation('../../data/courtright/segmentations_filtered/DJI_0576.npy')
             t1 = time.time()
-            image, pixel2point, point2pixel  = pointcloud_projector.project('DJI_0595.JPG')
+            print('Time for reading data: ', t1 - t0)
+            image, pixel2point, point2pixel  = pointcloud_projector.project('DJI_0576.JPG')
             t2 = time.time()
             print('Time for projection: ', t2 - t1)
-
-            # save image
-            image_path = '../../data/DJI_0595_agisoft.png'
-            cv2.imwrite(image_path, image)
-
             
             # add color to points
-            t1 = time.time()
             radius = 2
             decaying = 2
             colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
-            t2 = time.time()
-            print('Time for adding colors: ', t2 - t1)
+            t3 = time.time()
+            print('Time for adding colors: ', t3 - t2)
 
-            write_las(pointcloud_projector.points, colors, "../../data/courtright_test_agisoft.las")
+            write_las(pointcloud_projector.points, colors, "../../data/courtright/courtright_576.las")
+            t4 = time.time()
+            print('Time for writing las: ', t4 - t3)
 
     else:
         pass

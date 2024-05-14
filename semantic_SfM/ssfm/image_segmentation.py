@@ -5,6 +5,9 @@ import pickle
 import numpy as np
 from ssfm.files import *
 
+from joblib import Parallel, delayed
+from tqdm import tqdm
+
 """
 SamAutomaticMaskGenerator
     Arguments:
@@ -54,13 +57,35 @@ class ImageSegmentation(object):
 
         self.configs = configs
 
-        model_pool = ['sam']
+        model_pool = ['sam', 'sam_hq']
 
         model_name = configs['model_name']
 
         if model_name not in model_pool:
             raise NotImplementedError('Model not implemented.')
         elif model_name == 'sam':
+            assert os.path.exists(configs['model_path']), 'Model path does not exist.'
+
+            sam_checkpoint = configs['model_path']
+            model_type = configs['model_type']
+            device = configs['device']
+            points_per_side = configs['points_per_side']
+            pred_iou_thresh = configs['pred_iou_thresh']
+            stability_score_thresh = configs['stability_score_thresh']
+            crop_n_layers = configs['crop_n_layers']
+
+            self.sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
+            self.sam.to(device=device)
+            
+            self.mask_generator = SamAutomaticMaskGenerator(
+                model=self.sam, 
+                points_per_side=points_per_side,
+                pred_iou_thresh=pred_iou_thresh,
+                stability_score_thresh=stability_score_thresh,
+                crop_n_layers = crop_n_layers
+            )
+
+        elif model_name == 'sam_hq':
             assert os.path.exists(configs['model_path']), 'Model path does not exist.'
 
             sam_checkpoint = configs['model_path']
@@ -122,8 +147,15 @@ class ImageSegmentation(object):
                 image = cv2.resize(image, (maximum_size, int(image.shape[0] * maximum_size / image.shape[1])))
         else:
             pass
+
+        if self.distortion_params is not None:
+            # undistort the image
+            image = cv2.undistort(image, self.matrix_intrinsics, self.distortion_params)
         
         if self.configs['model_name'] == 'sam':
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            masks = self.mask_generator.generate(image)
+        elif self.configs['model_name'] == 'sam_hq':
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             masks = self.mask_generator.generate(image)
         else:
@@ -210,16 +242,94 @@ class ImageSegmentation(object):
             # resize img to the original size (self.image_size) using nearest neighbor interpolation
             img = cv2.resize(img, (self.image_size[1], self.image_size[0]), interpolation=cv2.INTER_NEAREST)
 
+            """
             if self.distortion_params is not None:
                 # undistort the image
+                img = img + 1
                 img = cv2.undistort(img, self.matrix_intrinsics, self.distortion_params)
+                img = img - 1
             else:
                 pass
-
+            """
             # set the dtype to np.int16
             img = img.astype(np.int16)
 
             np.save(save_path, img)
+
+class ParallelImageSegmentation(object):
+    def __init__(self, configs):
+        devices = configs['devices']
+        assert len(devices) > 0, 'No devices specified.'
+        # print the devices
+        print('Devices:', devices)
+        model_params = {}
+        model_params['model_name'] = configs['model_name']
+        model_params['model_path'] = configs['model_path']
+        model_params['model_type'] = configs['model_type']
+        model_params['points_per_side'] = configs['points_per_side']
+        model_params['pred_iou_thresh'] = configs['pred_iou_thresh']
+        model_params['stability_score_thresh'] = configs['stability_score_thresh']
+        model_params['crop_n_layers'] = configs['crop_n_layers']
+
+        self.models_params = []
+        for device in devices:
+            model_params['device'] = device
+            self.models_params.append(model_params.copy())
+        
+        self.distortion_correction = False
+        self.segmentation_folder_path = None
+        self.maximum_size = None
+        self.save_overlap = None
+
+    def __predict(self, model_params, image_paths):
+        """
+        Arguments:
+            model_params (dict): The parameters of the model.
+            image_paths (list): A list of image paths.
+        """
+        image_segmentor = ImageSegmentation(model_params)
+        if self.distortion_correction:
+            if self.additional_camera_parameters_path is not None:
+                image_segmentor.set_distortion_correction(self.camera_parameters_path, self.additional_camera_parameters_path)
+            else:
+                image_segmentor.set_distortion_correction(self.camera_parameters_path)
+
+        image_segmentor.batch_predict(image_paths, self.segmentation_folder_path, self.maximum_size, self.save_overlap)
+
+
+    def parallel_predict(self, image_paths, segmentation_folder_path, maximum_size=10000, save_overlap=False, camera_parameters_path=None, additional_camera_parameters_path=None):
+        """
+        Arguments:
+            image_paths (list): A list of image paths.
+            segmentation_folder_path (str): The path to save the masks.
+            maximum_size (int): The maximum size of the image. If the image is larger than this, it will be resized.
+            save_overlap (bool): Whether to save the overlap of the image and the masks.
+        """
+        # create segmentation_folder_path if not exists
+        if not os.path.exists(segmentation_folder_path):
+            os.makedirs(segmentation_folder_path)
+
+        if camera_parameters_path is not None:
+            self.distortion_correction = True
+            self.camera_parameters_path = camera_parameters_path
+            self.additional_camera_parameters_path = additional_camera_parameters_path
+        else:
+            self.distortion_correction = False
+        
+        self.segmentation_folder_path = segmentation_folder_path
+        self.maximum_size = maximum_size
+        self.save_overlap = save_overlap
+        
+        # based on the devices, divide the image_paths
+        num_devices = len(self.models_params)
+        num_images = len(image_paths)
+        num_images_per_device = num_images // num_devices
+        image_paths_list = [image_paths[i*num_images_per_device:(i+1)*num_images_per_device] for i in range(num_devices-1)]
+        image_paths_list.append(image_paths[(num_devices-1)*num_images_per_device:])
+
+        # use joblib to parallel predict
+        Parallel(n_jobs=num_devices)(delayed(self.__predict)(self.models_params[i], image_paths_list[i]) for i in range(num_devices))
+
 
 
 sam_params = {}

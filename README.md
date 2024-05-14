@@ -45,12 +45,15 @@ For image segmentation, we have used Segment Anything Model from Meta:
 
 3. Depth Image Rendering from Mesh and Depth Filtering: [docs/depth_filtering.md](docs/depth_filtering.md)
 
+4. Camera Calibration Optimization: [docs/camera_calibration_optimization.md](docs/camera_calibration_optimization.md)
 
 
+## Examples
+We provide jupyter notebooks (Semantic_SfM/projects/) as examples to use the semantic SfM workflow.
 
 ## QnA
 
 1. *When I import point clouds into CloudCompare, the points look sparse with strips. How can I fix it?* Such issues occur when point coordinates in CloudCompare are large. To fix the visualization issues, you can choose to automatically re-center the points when importing a point cloud. 
 
-2. *My semantics in a resulting point cloud are shifted. Why does this happen?* When using WebODM, the camera intrinsic parameter estimation sometimes can be inaccurate. Usually, when $c_x$ or $c_y$ are greater than +/-0.01, this indicates the camera intrinsic parameter estimation may not be useable. In this case, you should use Agisoft, which usually has more accurate camera calibration results.  
+2. *My semantics in a resulting point cloud are shifted. Why does this happen?* During bundle adjustment in SfM (e.g., photo alignment in Agisoft), cameras are automatically calibrated. However, the calibration is not always optimal. When the resulted $c_x$, $c_y$ are large, the projected semantics on point clouds would be shifted. Please refer to [this tutorial](docs/camera_calibration_optimization.md) to optimize camera calibration. 
 

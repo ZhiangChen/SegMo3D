@@ -461,6 +461,8 @@ class ObjectRegistration(object):
         segmented_objects_image2 = self.segmented_objects_images[key_image]
         object_ids_object1_image2 = segmented_objects_image2[pixel_object1_image2[:, 0], pixel_object1_image2[:, 1]]
         #logging.info('    object_ids_object1_image2: {}'.format(object_ids_object1_image2))
+        if len(object_ids_object1_image2) == 0:
+            return -1, None
         unique_ids, counts = np.unique(object_ids_object1_image2, return_counts=True)
         max_count_id = unique_ids[np.argmax(counts)]
         pixel_object2_image2 = np.argwhere(segmented_objects_image2 == max_count_id)
@@ -637,7 +639,6 @@ if __name__ == "__main__":
     object_registration_flag = True
     add_semantics_to_pointcloud_flag = False
     if object_registration_flag:
-
         # Create object registration
         t1 = time.time()
         obr = ObjectRegistration(pointcloud_path, segmentation_folder_path, association_folder_path)
@@ -649,7 +650,6 @@ if __name__ == "__main__":
         #obr.object_registration(iou_threshold=0.5)
 
     if add_semantics_to_pointcloud_flag:
-
         # Add semantics to the point cloud
         image_id = 50
         semantics_folder_path = os.path.join(association_folder_path, 'semantics', 'semantics_{}.npy'.format(image_id))
