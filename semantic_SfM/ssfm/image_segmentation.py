@@ -350,12 +350,6 @@ if __name__ == '__main__':
 
     if single_test:
         image_segmentor = ImageSegmentation(sam_params)
-        """
-        image_path = '../../data/mission_2/DJI_0247.JPG'
-        masks = image_segmentor.predict(image_path)
-        image_segmentor.save_overlap(image_segmentor.image, masks, './test.png')
-        image_segmentor.save_npy(masks, './test.npy')
-        """
         # read an image
         image_path = '../../data/courtright/DJI_photos/DJI_0576.JPG'
         image = cv2.imread(image_path)
@@ -363,29 +357,6 @@ if __name__ == '__main__':
         image = cv2.resize(image, (1000, 666))
         masks = image_segmentor.predict(image_path)
         image_segmentor.save_overlap(image, masks, '../../data/courtright/test.png')
-
-        """
-        # split image to 4 parts
-        img1 = image[0:333, 0:500]
-        img2 = image[0:333, 500:1000]
-        img3 = image[333:666, 0:500]
-        img4 = image[333:666, 500:1000]
-
-        cv2.imwrite('../../data/courtright/test1.png', img1)
-        cv2.imwrite('../../data/courtright/test2.png', img2)
-        cv2.imwrite('../../data/courtright/test3.png', img3)
-        cv2.imwrite('../../data/courtright/test4.png', img4)
-
-        masks1 = image_segmentor.predict('../../data/courtright/test1.png')
-        masks2 = image_segmentor.predict('../../data/courtright/test2.png')
-        masks3 = image_segmentor.predict('../../data/courtright/test3.png')
-        masks4 = image_segmentor.predict('../../data/courtright/test4.png')
-
-        image_segmentor.save_overlap(img1, masks1, '../../data/courtright/test1.png')
-        image_segmentor.save_overlap(img2, masks2, '../../data/courtright/test2.png')
-        image_segmentor.save_overlap(img3, masks3, '../../data/courtright/test3.png')
-        image_segmentor.save_overlap(img4, masks4, '../../data/courtright/test4.png')
-        """
         
 
     

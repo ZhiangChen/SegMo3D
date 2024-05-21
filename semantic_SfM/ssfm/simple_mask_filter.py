@@ -148,7 +148,6 @@ class SimpleMaskFilter(object):
         print(f"Total number of files: {len(self.segmentation_files)}")
         Parallel(n_jobs=num_processes)(delayed(self.filter_segmentation_file)(f) for f in tqdm(self.segmentation_files))
 
-
 if __name__ == "__main__":
     segmentation_folder_path = "../../data/courtright/segmentations"
 
