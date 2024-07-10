@@ -6,6 +6,43 @@ import xml.etree.ElementTree as ET
 import cv2
 
 
+
+def read_mesh_file(file_path):
+    assert os.path.exists(file_path)
+
+    mesh_vertices_color = np.load(file_path)
+    vertices = mesh_vertices_color[0]
+    colors = mesh_vertices_color[1]
+
+    return vertices, colors
+
+def read_camera_scannet(ssfm_scene_folder_path):
+    assert os.path.exists(ssfm_scene_folder_path), 'Scene folder does not exist!'
+    camera = dict()
+    intrinsic_color_depth_file_path = os.path.join(ssfm_scene_folder_path, 'reconstructions/intrinsic_color_depth.npy')
+    intrinsic_color_depth = np.load(intrinsic_color_depth_file_path)
+    intrinsic_color = intrinsic_color_depth[0]
+    intrinsic_depth = intrinsic_color_depth[1]
+
+    camera['intrinsic_color'] = intrinsic_color
+    camera['intrinsic_depth'] = intrinsic_depth
+
+    camera_poses_file_path = os.path.join(ssfm_scene_folder_path, 'reconstructions/camera_poses.npy')
+    camera_poses = np.load(camera_poses_file_path, allow_pickle=True).item()
+    
+    for key, value in camera_poses.items():
+        camera[key] = value
+
+    # get camera height and width
+    photo_folder_path = os.path.join(ssfm_scene_folder_path, 'photos')
+    photo_file_path = os.path.join(photo_folder_path, os.listdir(photo_folder_path)[0])
+    photo = cv2.imread(photo_file_path)
+    camera['width'] = photo.shape[1]
+    camera['height'] = photo.shape[0]
+
+    return camera
+
+
 def read_las_file(file_path):
     # check if the file exists
     assert os.path.exists(file_path)
@@ -243,20 +280,14 @@ def write_las(points, colors, filename):
 
 
 if __name__ == "__main__":
-    las_file = "../../data/model.las"
+    """
+    las_file = "../../data/courtright/SfM_products/agisoft_model.las"
     points, colors = read_las_file(las_file)
+    print(f"Read {len(points)} points and {len(colors)} colors from {las_file}")
 
-    camera_intrinsics_file = "../../data/camera.json"
-    camera_intrinsics = read_camera_intrinsics_webodm(camera_intrinsics_file)
-    print(camera_intrinsics)
-
-    # print the number of points
-    print("Number of points: {}".format(points.shape[0]))
-
-    #camera_list_file = "../../data/shots.geojson"
-    #cameras = read_camera_extrinsics_webodm(camera_list_file)
-
-    #write_las(points, colors, "test.las")
-
-    #cameras = read_camera_parameters_agisoft("../../data/box_canyon_export/camera_params.xml")
-
+    mesh_file = "../../data/scene0000_00/reconstructions/mesh_vertices_color.npy"
+    vertices, colors = read_mesh_file(mesh_file)
+    print(f"Read {len(vertices)} vertices and {len(colors)} colors from {mesh_file}")
+    """
+    camera = read_camera_scannet("../../data/scene0000_00")
+    print(camera['height'])

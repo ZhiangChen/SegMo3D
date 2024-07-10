@@ -9,6 +9,7 @@ import yaml
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+
 # association on all points
 @jit(nopython=True)
 def update_image_and_associations(image, z_buffer, points, colors, height, width):
@@ -22,7 +23,7 @@ def update_image_and_associations(image, z_buffer, points, colors, height, width
         px, py = int(x), int(y)
 
         if 0 <= px < width and 0 <= py < height:
-            if z < z_buffer[py, px]:
+            if 0 < z < z_buffer[py, px]:
                 z_buffer[py, px] = z
                 pixel2point[py, px] = i
                 image[py, px] = color
@@ -157,7 +158,23 @@ class PointcloudProjection(DepthImageRendering):
         assert self.sfm_software is not None, 'Please read the camera parameters before reading point cloud.'
         self.points, self.colors = read_las_file(pointcloud_path)
         if self.sfm_software == 'Agisoft':
-            self.colors = self.colors / 256
+            self.colors = (self.colors / 256).astype(np.uint8)
+        elif self.sfm_software == 'Scannet':
+            self.colors = (self.colors / 256).astype(np.uint8)
+            self.tri_mesh = "depth_images"
+
+    def read_scannet_mesh(self, mesh_vertices_color_path):
+        """
+        Arguments:
+            mesh_vertices_color_path (str): Path to the mesh vertices color file.
+        """
+        mesh_vertices_color = np.load(mesh_vertices_color_path)
+        self.points = mesh_vertices_color[0]
+        self.colors = mesh_vertices_color[1]
+        # the color is normalized from 0 to 1. Convert it to 0 to 255
+        self.colors = (self.colors * 255).astype(np.int8)
+
+        self.tri_mesh = "depth_images"
             
 
     def read_camera_parameters(self, camera_parameters_path, additional_camera_parameters_path=None):
@@ -175,9 +192,25 @@ class PointcloudProjection(DepthImageRendering):
             self.cameras = read_camera_parameters_agisoft(camera_parameters_path)
             self.sfm_software = "Agisoft"
 
-        self.camera_intrinsics = self.cameras['K'] 
+        self.camera_intrinsics_color = self.cameras['K'] 
         self.image_height = self.cameras['height']
         self.image_width = self.cameras['width']
+        
+    def read_scannet_camera_parameters(self, ssfm_scene_folder_path):
+        """
+        Arguments:
+            ssfm_scene_folder_path (str): Path to the scene folder.
+        """
+        self.ssfm_scene_folder_path = ssfm_scene_folder_path
+        self.cameras = read_camera_scannet(ssfm_scene_folder_path)
+        self.camera_intrinsics_color = self.cameras['intrinsic_color']  # 4 by 4 matrix
+        self.camera_intrinsics_color = self.camera_intrinsics_color[:3, :3]
+        self.camera_intrinsics_depth = self.cameras['intrinsic_depth']
+        self.camera_intrinsics_depth = self.camera_intrinsics_depth[:3, :3]
+        self.image_height = self.cameras['height']
+        self.image_width = self.cameras['width']
+
+        self.sfm_software = "Scannet"
         
 
     def read_segmentation(self, segmentation_path):
@@ -188,7 +221,7 @@ class PointcloudProjection(DepthImageRendering):
         assert os.path.exists(segmentation_path), 'Segmentation path does not exist.'
         self.segmentation = np.load(segmentation_path)  # for adding color to points
    
-    def project(self, frame_key, i=None, j=None):
+    def project(self, frame_key):
         """
         Arguments:
             frame_key (str): The original image names to be projected onto. E.g., 'DJI_0313.JPG'.
@@ -210,7 +243,7 @@ class PointcloudProjection(DepthImageRendering):
         # Drop the homogeneous component (w)
         points_camera_space = points_transformed[:, :3]
 
-        points_projected_d = np.matmul(points_camera_space, self.camera_intrinsics.T)
+        points_projected_d = np.matmul(points_camera_space, self.camera_intrinsics_color.T)
         points_projected = points_projected_d / points_projected_d[:, -1].reshape(-1, 1)
         # replace depth 
         points_projected[:, 2] = points_projected_d[:, 2]
@@ -221,11 +254,20 @@ class PointcloudProjection(DepthImageRendering):
         if self.depth_filtering_threshold == 0:
             z_buffer = np.full((self.image_height, self.image_width), np.inf)
         else:
-            # Get depth image from mesh
-            depth_mesh = self.render_depth_image(frame_key)
-            z_buffer = depth_mesh + self.depth_filtering_threshold
+            if self.tri_mesh == "depth_images":
+                depth_image_path = os.path.join(self.ssfm_scene_folder_path, 'associations/depth', frame_key[:-4] + '.npy')
+                depth_mesh = np.load(depth_image_path)
+                # resize the depth image to the size of the original image
+                depth_mesh = cv2.resize(depth_mesh, (self.image_width, self.image_height), interpolation=cv2.INTER_NEAREST)
+
+            else:
+                # Get depth image from mesh
+                depth_mesh = self.render_depth_image(frame_key)
+        
+        z_buffer = depth_mesh + self.depth_filtering_threshold
             
         image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
+
 
         return z_buffer, pixel2point, point2pixel
     
@@ -293,12 +335,16 @@ class PointcloudProjection(DepthImageRendering):
             # Use Joblib for parallel processing with the tqdm-wrapped iterable
             Parallel(n_jobs=num_workers)(
                 delayed(self.process_frame)(frame_key, save_folder_path) for frame_key in tasks)
+            
+
+    def parallel_batch_project_joblib_scannet(self, ):
+        pass
 
 
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    site = 'courtright'
+    site = 'scannet'  # 'box_canyon', 'courtright', 'scannet'
 
     single_projection_flag = True  # True: project semantics from one image to the point cloud.
 
@@ -352,6 +398,30 @@ if __name__ == "__main__":
             print('Time for adding colors: ', t3 - t2)
 
             write_las(pointcloud_projector.points, colors, "../../data/courtright/courtright_576.las")
+            t4 = time.time()
+            print('Time for writing las: ', t4 - t3)
+
+        elif site == 'scannet':
+            # project the point cloud
+            t0 = time.time()
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=10.05)
+            pointcloud_projector.read_scannet_camera_parameters('../../data/scene0000_00')
+            #pointcloud_projector.read_scannet_mesh('../../data/scene0000_00/reconstructions/mesh_vertices_color.npy')
+            pointcloud_projector.read_pointcloud('../../data/scene0000_00/reconstructions/scene0000_00.las')
+            pointcloud_projector.read_segmentation('../../data/scene0000_00/segmentations/0.npy')
+            t1 = time.time()
+            print('Time for reading data: ', t1 - t0)
+            image, pixel2point, point2pixel  = pointcloud_projector.project('0.jpg')
+            t2 = time.time()
+            print('Time for projection: ', t2 - t1)
+            # add color to points
+            radius = 2
+            decaying = 2
+            colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+            t3 = time.time()
+            print('Time for adding colors: ', t3 - t2)
+
+            write_las(pointcloud_projector.points, colors, "../../data/scene0000_00/scene0000_00.las")
             t4 = time.time()
             print('Time for writing las: ', t4 - t3)
 

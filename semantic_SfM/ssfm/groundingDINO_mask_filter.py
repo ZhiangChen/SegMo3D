@@ -95,7 +95,7 @@ class GroundingDINOMaskFilter(object):
             assert os.path.exists(config_path), "The config file does not exist: {}".format(config_path)
             model = load_model(config_path, weights_path, device)
 
-            for i in tqdm(range(len(image_lists))):
+            for i in tqdm(range(1)):  # for i in tqdm(range(len(image_lists))):
                 image_path = image_lists[i]
                 image_source, image = self.load_image(image_path)
 
@@ -240,10 +240,10 @@ if __name__ == "__main__":
     mask_filter = GroundingDINOMaskFilter(mask_folder_path, save_folder_path)
     mask_filter.set_distortion_correction('../../data/courtright/SfM_products/agisoft_cameras.xml')
 
-    #mask_filter.predict_bounding_boxes(image_folder_path, grounding_dino_config)
+    mask_filter.predict_bounding_boxes(image_folder_path, grounding_dino_config)
 
-    grounding_dino_prediction_folder_path = grounding_dino_config['prediction_save_folder_path'] 
+    #grounding_dino_prediction_folder_path = grounding_dino_config['prediction_save_folder_path'] 
     
     #mask_filter.filter(('../../data/courtright/segmentations_filtered/DJI_0576.npy', '../../data/courtright/grounding_dino_predictions/DJI_0576.npy'))
-    mask_filter.filter_batch(grounding_dino_prediction_folder_path)
+    #mask_filter.filter_batch(grounding_dino_prediction_folder_path)
     

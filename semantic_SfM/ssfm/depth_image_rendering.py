@@ -91,7 +91,7 @@ class DepthImageRendering(object):
             self.cameras = read_camera_parameters_agisoft(camera_parameters_path)
             self.sfm_software = "Agisoft"
 
-        self.camera_intrinsics = self.cameras['K']
+        self.camera_intrinsics_color = self.cameras['K']
         self.image_height = self.cameras['height']
         self.image_width = self.cameras['width']
 
@@ -114,7 +114,7 @@ class DepthImageRendering(object):
         # Drop the homogeneous component (w)
         points_camera_space = points_transformed[:, :3]
 
-        points_projected_d = np.matmul(points_camera_space, self.camera_intrinsics.T)
+        points_projected_d = np.matmul(points_camera_space, self.camera_intrinsics_color.T)
         points_projected = points_projected_d / points_projected_d[:, -1].reshape(-1, 1)
         # replace depth 
         points_projected[:, 2] = points_projected_d[:, 2]
