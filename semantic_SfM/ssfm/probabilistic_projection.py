@@ -337,9 +337,6 @@ class PointcloudProjection(DepthImageRendering):
                 delayed(self.process_frame)(frame_key, save_folder_path) for frame_key in tasks)
             
 
-    def parallel_batch_project_joblib_scannet(self, ):
-        pass
-
 
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
@@ -404,10 +401,10 @@ if __name__ == "__main__":
         elif site == 'scannet':
             # project the point cloud
             t0 = time.time()
-            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=10.05)
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.05)
             pointcloud_projector.read_scannet_camera_parameters('../../data/scene0000_00')
-            #pointcloud_projector.read_scannet_mesh('../../data/scene0000_00/reconstructions/mesh_vertices_color.npy')
-            pointcloud_projector.read_pointcloud('../../data/scene0000_00/reconstructions/scene0000_00.las')
+            #pointcloud_projector.read_pointcloud('../../data/scene0000_00/reconstructions/scene0000_00.las')
+            pointcloud_projector.read_scannet_mesh('../../data/scene0000_00/reconstructions/mesh_vertices_color.npy')
             pointcloud_projector.read_segmentation('../../data/scene0000_00/segmentations/0.npy')
             t1 = time.time()
             print('Time for reading data: ', t1 - t0)

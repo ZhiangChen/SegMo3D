@@ -9,10 +9,18 @@ def memory_calculator(pointcloud_file, image_file, num_images, num_segmentation_
     # assert if the image file exists
     assert os.path.exists(image_file), "Image file does not exist"
 
-    # read the pointcloud file
-    points, colors = read_las_file(pointcloud_file)
-    # get the number of points
-    num_points = points.shape[0]
+    if pointcloud_file.endswith(".las"):
+        # read the pointcloud file
+        points, colors = read_las_file(pointcloud_file)
+        # get the number of points
+        num_points = points.shape[0]
+    elif pointcloud_file.endswith(".npy"):
+        # read the pointcloud file
+        points, colors = read_mesh_file(pointcloud_file)
+        # get the number of points
+        num_points = points.shape[0]
+    else:
+        raise ValueError("Invalid pointcloud file format")
 
     # read the image file
     image = cv2.imread(image_file)

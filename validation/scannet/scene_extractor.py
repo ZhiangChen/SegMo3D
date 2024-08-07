@@ -6,6 +6,7 @@ from PIL import Image
 from joblib import Parallel, delayed
 from tqdm import tqdm
 import open3d as o3d
+import json
 
 class SceneExtractor(object):
     def __init__(self, scene_dir, save_dir, extract_scene_folder='output'):
@@ -77,14 +78,14 @@ class SceneExtractor(object):
     def extract_segmentations(self):
         # get scene name from scene_dir
         scene_name = os.path.basename(self.scene_dir)
-        unzip_folder = "instance"
+        unzip_folder = "instance-filt"
         unzip_folder_path = os.path.join(self.scene_dir, unzip_folder)
         if not os.path.exists(unzip_folder_path):
-            # raw instance segmentation zip file path
-            raw_instance_segmentation_zip_path = os.path.join(self.scene_dir, f'{scene_name}_2d-instance.zip')
+            # filtered instance segmentation zip file path
+            filtered_instance_segmentation_zip_path = os.path.join(self.scene_dir, f'{scene_name}_2d-instance-filt.zip')
             # extract raw instance segmentation zip file to current folder
-            # note that instance segmentation files: Raw 2d projections of aggregated annotation instances as 8-bit pngs
-            os.system(f'unzip {raw_instance_segmentation_zip_path} -d {self.scene_dir}')
+            # note that instance segmentation files: 
+            os.system(f'unzip {filtered_instance_segmentation_zip_path} -d {self.scene_dir}')
         else:
             None
 
@@ -167,12 +168,78 @@ class SceneExtractor(object):
         np.save(os.path.join(self.reconstruction_folder_path, 'camera_poses.npy'), camera_poses)
         
 
+    def extract_ground_truth(self, ):
+        # get scene name from scene_dir
+        scene_name = os.path.basename(self.scene_dir)
+        # over-segmentation annotation file path: <scanId>_vh_clean.aggregation.json
+        over_annotation_file_path = os.path.join(self.scene_dir, f'{scene_name}_vh_clean_2.0.010000.segs.json')
+        # read over-segmentation annotation file
+        with open(over_annotation_file_path, 'r') as f:
+            over_annotation = json.load(f)
+        
+        segIndices = over_annotation['segIndices']
+
+        # instance-segmentation annotation file path: <scanId>.aggregation.json
+        instance_annotation_file_path = os.path.join(self.scene_dir, f'{scene_name}.aggregation.json')
+        # read instance-segmentation annotation file
+        with open(instance_annotation_file_path, 'r') as f:
+            instance_annotation = json.load(f)
+            
+        segGroups = instance_annotation['segGroups']
+        # build a dictionary of segGroups: key is segIndex, value is segGroup id
+        segGroupDict = dict()
+        for segGroup in segGroups:
+            for segIndex in segGroup['segments']:
+                # if segIndex is not in segGroupDict, add it
+                if segIndex not in segGroupDict:
+                    segGroupDict[segIndex] = segGroup['id']
+                else:
+                    raise ValueError('segIndex already exists in segGroupDict!')
+                
+        # get the maximum segGroup id
+        max_segGroup_id = max([segGroup['id'] for segGroup in segGroups])
+
+        semantic_points = []
+        for segIndex in segIndices:
+            # if segIndex is in segGroupDict, add it to semantic_points
+            if segIndex in segGroupDict:
+                # get segGroup id from segGroupDict
+                segGroup = segGroupDict[segIndex]
+                semantic_points.append(segGroup)
+            else:
+                semantic_points.append(max_segGroup_id + 1)
+
+        # save semantic points as npy file under associations folder
+        np.save(os.path.join(self.associations_folder_path, 'semantic_points.npy'), semantic_points)
+
+
+def batch_extract_scenes(scene_dir, save_dir):
+    # iterate over folders in scene_dir
+    for scene_folder in os.listdir(scene_dir):
+        scene_folder_path = os.path.join(scene_dir, scene_folder)
+        save_folder_path = os.path.join(save_dir, scene_folder)
+        if not os.path.exists(save_folder_path):
+            os.makedirs(save_folder_path)
+        scene_extractor = SceneExtractor(scene_folder_path, save_folder_path)
+        scene_extractor.extract_photos()
+        scene_extractor.extract_depths()
+        #scene_extractor.extract_segmentations()
+        scene_extractor.extract_reconstruction()
+        #scene_extractor.extract_ground_truth()
+
+
+
 
 if __name__ == '__main__':
-    scene_dir = '../../data/scannet/scans/scene0000_00'
-    save_dir = '../../data/scene0000_00'
-    scene_extractor = SceneExtractor(scene_dir, save_dir)
-    #scene_extractor.extract_photos()
-    #scene_extractor.extract_depths()
-    #scene_extractor.extract_segmentations()
-    scene_extractor.extract_reconstruction()
+    # scene_dir = '../../data/scannet/scans/scene0000_00'
+    # save_dir = '../../data/scene0000_00'
+    # scene_extractor = SceneExtractor(scene_dir, save_dir)
+    # #scene_extractor.extract_photos()
+    # #scene_extractor.extract_depths()
+    # #scene_extractor.extract_segmentations()
+    # #scene_extractor.extract_reconstruction()
+    # scene_extractor.extract_ground_truth()
+
+    scene_dir = '../../data/scannet/scans_test'
+    save_dir = '../../data/scannet/ssfm'
+    batch_extract_scenes(scene_dir, save_dir)

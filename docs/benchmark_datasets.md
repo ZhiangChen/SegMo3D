@@ -31,3 +31,4 @@ Cityscapes (https://www.cityscapes-dataset.com/dataset-overview/) focuses on urb
 1. Kubric
 
 Kubric (https://kubric.readthedocs.io/en/latest/) is an open-source dataset generation pipeline designed to create high-quality synthetic datasets for computer vision and machine learning research. It leverages Blender for 3D rendering and Bullet for physics simulation to produce diverse and realistic multi-modal data, including RGB images, depth maps, optical flow, and segmentation masks.
+

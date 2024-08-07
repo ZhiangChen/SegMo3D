@@ -9,50 +9,6 @@ from collections import defaultdict
 import logging
 import yaml
 
-def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path):
-    """
-    Add semantics to the point cloud and save it as a .las file.
-
-    Parameters
-    ----------
-    pointcloud_path : str, the path to the .las file
-    semantics_path : str, the path to the semantics file
-    save_las_path : str, the path to save the .las file
-
-    Returns
-    -------
-    None
-    """
-    points, colors = read_las_file(pointcloud_path)
-    semantics = np.load(semantics_path)
-
-    print('maximum of semantics: ', semantics.max())
-    print('number of unique semantics: ', len(np.unique(semantics)))
-
-    # construct a .las file
-    hdr = laspy.LasHeader(version="1.2", point_format=3)
-    hdr.scale = [0.0001, 0.0001, 0.0001]  # Example scale factor, adjust as needed
-    hdr.offset = np.min(points, axis=0)
-
-    # Create a LasData object
-    las = laspy.LasData(hdr)
-
-    # Add points
-    las.x = points[:, 0]
-    las.y = points[:, 1]
-    las.z = points[:, 2]
-
-    # Add colors
-    las.red = colors[:, 0]
-    las.green = colors[:, 1]
-    las.blue = colors[:, 2]
-
-    # Add semantics
-    las.intensity = semantics
-
-    # Write the LAS file
-    las.write(save_las_path)
-
 
 def group_lists(lists):
     """
@@ -196,9 +152,16 @@ class ObjectRegistration(object):
 
         # check if the pointcloud file exists
         assert os.path.exists(self.pointcloud_path), 'Pointcloud path does not exist.'
-        with laspy.open(self.pointcloud_path) as las_file:
-            header = las_file.header
-            self.N_points = header.point_count
+
+        if pointcloud_path.endswith('.las'):
+            with laspy.open(self.pointcloud_path) as las_file:
+                header = las_file.header
+                self.N_points = header.point_count
+        elif pointcloud_path.endswith('.npy'):
+            mesh_vertices_color = np.load(pointcloud_path)
+            points = mesh_vertices_color[0]
+            colors = mesh_vertices_color[1]
+            self.N_points = points.shape[0]
 
         # load keyimage association files (.npy)
         if keyimage_associations_file_name is None:
@@ -418,7 +381,11 @@ class ObjectRegistration(object):
         max_prob_indices = np.argmax(self.pc_segmentation_probs, axis=1)
         semantics = self.pc_segmentation_ids[np.arange(len(max_prob_indices)), max_prob_indices]
 
-        points, colors = read_las_file(self.pointcloud_path)
+        if self.pointcloud_path.endswith('.las'):
+            points, colors = read_las_file(self.pointcloud_path)
+        elif self.pointcloud_path.endswith('.npy'):
+            points, colors = read_mesh_file(self.pointcloud_path)
+            colors = colors * 255
         # construct a .las file
         hdr = laspy.LasHeader(version="1.2", point_format=3)
         hdr.scale = [0.0001, 0.0001, 0.0001]  # Example scale factor, adjust as needed

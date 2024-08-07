@@ -8,8 +8,7 @@ class KeyimageAssociationsBuilder(object):
     def __init__(self, read_folder_path, segmentation_folder_path):
         """
         Arguments:
-            read_folder_path (str): The path to the folder containing the point2pixel files.
-            pixel2point_folder_path (str): The path to the folder containing the pixel2point files.
+            read_folder_path (str): The path to the folder containing the point2pixel files and pixel2point files.
             segmentation_folder_path (str): The path to the folder containing the segmentation files.
         """
         self.read_folder_path = read_folder_path
@@ -29,7 +28,7 @@ class KeyimageAssociationsBuilder(object):
         self.N_points = point2pixel.shape[0]
 
         assert os.path.exists(segmentation_folder_path), 'Segmentation folder path does not exist.'
-        self.segmentation_file_paths = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if f.endswith('.npy')]
+        self.segmentation_file_paths = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if (f.endswith('.npy') and f in os.listdir(pixel2point_folder_path))]
         self.segmentation_file_paths.sort()
 
         # check if the number of images is the same
