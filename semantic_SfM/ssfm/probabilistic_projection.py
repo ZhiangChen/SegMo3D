@@ -273,11 +273,11 @@ class PointcloudProjection(DepthImageRendering):
     
 
     def process_frame(self, file_name, save_folder_path, depth_folder_path=None):
-        print('Processing: {}'.format(file_name))
+        #print('Processing: {}'.format(file_name))
         t1 = time.time()
         depth_image, pixel2point, point2pixel = self.project(file_name)
         t2 = time.time()
-        print('Time for projection: ', t2 - t1)
+        #print('Time for projection: ', t2 - t1)
 
         pixel2point_folder_path = os.path.join(save_folder_path, 'pixel2point')
 
