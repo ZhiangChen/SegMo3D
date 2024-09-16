@@ -138,17 +138,19 @@ def numba_update_pc_segmentation(associations1_point2pixel, segmented_objects_im
 
 
 class ObjectRegistration(object):
-    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, keyimage_yaml_name=None):
+    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, keyimage_yaml_name=None, loginfo=True):
         self.pointcloud_path = pointcloud_path
         self.segmentation_folder_path = segmentation_folder_path
         self.association_folder_path = association_folder_path
+        self.loginfo = loginfo
 
-        logging.basicConfig(filename="object_registration.log", 
-                            format='%(asctime)s %(message)s', 
-                            filemode='w') 
+        if self.loginfo:
+            logging.basicConfig(filename="object_registration.log", 
+                                format='%(asctime)s %(message)s', 
+                                filemode='w') 
 
-        self.logger = logging.getLogger() 
-        self.logger.setLevel(logging.DEBUG) 
+            self.logger = logging.getLogger() 
+            self.logger.setLevel(logging.DEBUG) 
 
         # check if the pointcloud file exists
         assert os.path.exists(self.pointcloud_path), 'Pointcloud path does not exist.'
@@ -232,7 +234,8 @@ class ObjectRegistration(object):
                                                         self.associations_point2pixel_file_paths[i]))
 
         # log the number of segmentation-association pairs
-        self.logger.info('Number of segmentation-association pairs: {}'.format(len(self.segmentation_association_pairs)))
+        if self.loginfo:
+            self.logger.info('Number of segmentation-association pairs: {}'.format(len(self.segmentation_association_pairs)))
 
         # initialize data structures
         self.latest_registered_id = 0  # the latest registered object id
@@ -262,7 +265,8 @@ class ObjectRegistration(object):
             registered_objects_id = unique_ids[max_prob_index]
 
             # log registered_objects_id
-            self.logger.info('    registered_objects_id: {}'.format(registered_objects_id))
+            if self.loginfo:
+                self.logger.info('    registered_objects_id: {}'.format(registered_objects_id))
 
         if object_id not in self.object_manager.keys():
             if registered_objects_id == None:
@@ -329,11 +333,12 @@ class ObjectRegistration(object):
 
             self.pc_segmentation_ids[purge_exclude_keep_any] = keep_object_id
             self.pc_segmentation_ids[purge_intersect_keep_any] = -1
-            self.pc_segmentation_probs[purge_intersect_keep_any] = 0
+            
 
             self.pc_segmentation_probs[keep_intersect_purge_any] += self.pc_segmentation_probs[purge_intersect_keep_any]
-
+            
             self.pc_segmentation_probs[purge_intersect_keep_any] = 0
+
 
         # construct object_manager_array where the first column is the object id and the second column is the registered object id
         object_manager_array = -np.ones((len(self.object_manager), 2), dtype=np.int32)
@@ -366,7 +371,8 @@ class ObjectRegistration(object):
                 object_manager_copy[object_id] = registered_object_ids
 
         # log object_manager_copy
-        self.logger.info('    object_manager_copy: {}'.format(object_manager_copy))
+        if self.loginfo:
+            self.logger.info('    object_manager_copy: {}'.format(object_manager_copy))
 
         # test end
                 
@@ -479,8 +485,9 @@ class ObjectRegistration(object):
 
         for image_id in range(N_images):
             # logging the current, total number images, and image name
-            self.logger.info(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')
-            print(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')    
+            if self.loginfo:
+                self.logger.info(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')
+                print(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')    
 
             t1 =   time.time()
             # load segmentation and association files
@@ -560,7 +567,8 @@ class ObjectRegistration(object):
 
                             iou, intersected_points = self.calculate_3D_IoU(point_object1_image2, point_object2_image1)
 
-                            self.logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
+                            if self.loginfo:
+                                self.logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
 
                             if iou >= iou_threshold:
                                 self.update_object_manager(object_id, intersected_points)
@@ -568,20 +576,24 @@ class ObjectRegistration(object):
                                 self.update_object_manager(object_id, None)
             
             t3 = time.time()
-            self.logger.info("    time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
-            #print("time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
+            if self.loginfo:
+                self.logger.info("    time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
+                #print("time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
 
-            # logging self.object_manager
-            self.logger.info('    object_manager: {}'.format(self.object_manager))
+                # logging self.object_manager
+                self.logger.info('    object_manager: {}'.format(self.object_manager))
 
             self.update_pc_segmentation(associations1_point2pixel, segmented_objects_image1)
             t4 = time.time()
-            self.logger.info("    time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
-            #print("time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
+            
+            if self.loginfo:
+                self.logger.info("    time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
+                #print("time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
 
             t2 = time.time()
-            self.logger.info("    time elapsed for image {}: {}".format(image_id+1, t2-t1))
-            #print("time elapsed for image {}: {}".format(image_id+1, t2-t1))
+            if self.loginfo:
+                self.logger.info("    time elapsed for image {}: {}".format(image_id+1, t2-t1))
+                #print("time elapsed for image {}: {}".format(image_id+1, t2-t1))
         
             if save_semantics:
                 # create a folder to save semantics under self.association_folder_path

@@ -180,8 +180,11 @@ class ImageSegmentation(object):
         total = len(image_paths)
         for i, image_path in enumerate(image_paths):
             print('Processing image {}/{}.'.format(i+1, total))
-            masks = self.predict(image_path, maximum_size)
             save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '.npy')
+            # skip if the file already exists
+            if os.path.exists(save_path):
+                continue
+            masks = self.predict(image_path, maximum_size)
             self.save_npy(masks, save_path)
             if save_overlap:
                 overlap_save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '_overlap.png')

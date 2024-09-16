@@ -7,11 +7,10 @@ from torchvision.ops import box_convert
 import torch
 from ssfm.files import read_camera_parameters_webodm, read_camera_parameters_agisoft
 from joblib import Parallel, delayed
+import yaml
 
 import groundingdino.datasets.transforms as T
 from groundingdino.util.inference import load_model, predict, annotate
-
-
 
 
 
@@ -65,13 +64,21 @@ class GroundingDINOMaskFilter(object):
         image_transformed, _ = transform(image_source, None)
         return image, image_transformed
 
-    def predict_bounding_boxes(self, image_folder_path, grounding_dino_config):
+    def predict_bounding_boxes(self, image_folder_path, grounding_dino_config, keyimages_path=None):
         # get image paths
         assert os.path.exists(image_folder_path), "The image folder does not exist: {}".format(image_folder_path)
-        image_lists = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG')]
+        image_lists = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG') or f.endswith('.jpg')]
         image_lists.sort()
         # print the number of images
         print("The number of images: {}".format(len(image_lists)))
+
+        if keyimages_path is not None:
+            with open(keyimages_path, 'r') as f:
+                keyimages = yaml.load(f, Loader=yaml.FullLoader)
+            # keyimages is a list of image names ending with .npy; remove the extension
+            keyimages = [os.path.basename(k).split('.')[0] for k in keyimages]
+            image_lists = [i for i in image_lists if os.path.basename(i).split('.')[0] in keyimages]    
+
         if len(image_lists) == 0:
             # print the error message
             print("There is no image in the folder: {}".format(image_folder_path))
@@ -80,7 +87,7 @@ class GroundingDINOMaskFilter(object):
         else:
             weights_path = grounding_dino_config['weights_path']
             config_path = grounding_dino_config['config_path']
-            text_prompt = grounding_dino_config['text_prompt']
+            text_prompts = grounding_dino_config['text_prompt']
             box_treshold = grounding_dino_config['box_treshold']
             text_treshold = grounding_dino_config['text_treshold']
             device = grounding_dino_config['device']
@@ -95,26 +102,45 @@ class GroundingDINOMaskFilter(object):
             assert os.path.exists(config_path), "The config file does not exist: {}".format(config_path)
             model = load_model(config_path, weights_path, device)
 
-            for i in tqdm(range(1)):  # for i in tqdm(range(len(image_lists))):
+            for i in tqdm(range(len(image_lists))): # for i in tqdm(range(1)):  # 
                 image_path = image_lists[i]
                 image_source, image = self.load_image(image_path)
 
-                # predict the bounding boxes
-                # boxes: [N, 4] where N is the number of boxes
-                # logits: [N] scores of the boxes
-                # phrases: [N] the predicted phrases of the boxes
-                boxes, logits, phrases = predict(model=model, 
-                                                 image=image, 
-                                                 caption=text_prompt, 
-                                                 box_threshold=box_treshold, 
-                                                 text_threshold=text_treshold)
-                
-                if remove_background:
-                    boxes_width = boxes[:, 2]
-                    boxes_height = boxes[:, 3]
-                    boxes_area = boxes_width * boxes_height
-                    boxes = boxes[boxes_area < 0.9]
-                    logits = logits[boxes_area < 0.9]
+                # get image width and height
+                self.width, self.height, _ = image_source.shape
+
+                boxes_all = []
+                logits_all = []
+                phrases_all = []
+                class_ids_all = []
+                for label_id, text_prompt in enumerate(text_prompts):
+                    # predict the bounding boxes
+                    # boxes: [N, 4] where N is the number of boxes
+                    # logits: [N] scores of the boxes
+                    # phrases: [N] the predicted phrases of the boxes
+                    boxes, logits, phrases = predict(model=model, 
+                                                    image=image, 
+                                                    caption=text_prompt, 
+                                                    box_threshold=box_treshold, 
+                                                    text_threshold=text_treshold)
+                    
+                    if remove_background:
+                        boxes_width = boxes[:, 2]
+                        boxes_height = boxes[:, 3]
+                        boxes_area = boxes_width * boxes_height
+                        boxes = boxes[boxes_area < 0.9]
+                        logits = logits[boxes_area < 0.9]
+                        phrases = [phrases[i] for i in range(len(phrases)) if boxes_area[i] < 0.9]
+
+                    boxes_all.append(boxes)
+                    logits_all.append(logits)
+                    phrases_all += phrases
+                    class_ids_all += [label_id] * len(boxes)
+
+                # concatenate the boxes, logits, and phrases
+                boxes = torch.cat(boxes_all, dim=0)
+                logits = torch.cat(logits_all, dim=0)
+                phrases = phrases_all
 
                 annotated_frame = annotate(image_source=image_source, boxes=boxes, logits=logits, phrases=phrases)
 
@@ -128,7 +154,8 @@ class GroundingDINOMaskFilter(object):
                 boxes = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
                 # concatenate the boxes and logits
                 logits = logits.reshape(-1, 1)
-                prediction = np.concatenate((boxes, logits), axis=1)
+                class_ids = np.asarray(class_ids_all).reshape(-1, 1)
+                prediction = np.concatenate((boxes, logits, class_ids), axis=1)
                 # save the prediction
                 prediction_name = image_name.split('.')[0] + '.npy'
                 prediction_path = os.path.join(prediction_save_folder_path, prediction_name)
@@ -227,7 +254,7 @@ if __name__ == "__main__":
     grounding_dino_config['weights_path'] = "../grounding_DINO/groundingdino_swint_ogc.pth"
     grounding_dino_config['config_path'] = "../grounding_DINO/GroundingDINO_SwinT_OGC.py"
     grounding_dino_config['prediction_save_folder_path'] = "../../data/courtright/grounding_dino_predictions"
-    grounding_dino_config['text_prompt'] = "rock"
+    grounding_dino_config['text_prompt'] = ["rock"]
     grounding_dino_config['box_treshold'] = 0.15
     grounding_dino_config['text_treshold'] = 0.25
     grounding_dino_config['device'] = 'cuda:5'

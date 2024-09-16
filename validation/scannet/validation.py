@@ -1,12 +1,12 @@
 import numpy as np
 import os
-
+import laspy
 
 class ScannetValidation(object):
     def __init__(self) -> None:
         pass
 
-    def read_scene(self, scene_folder_path, remove_background_in_prediction=True):
+    def read_scene(self, scene_folder_path, pred_file_path=None, remove_background_in_prediction=True):
         assert os.path.exists(scene_folder_path), 'Scene folder does not exist!'
 
         # read the ground truth
@@ -19,10 +19,22 @@ class ScannetValidation(object):
 
         # sort prediction files based on the number in the file name: semantics_0.npy, semantics_1.npy, ...
         prediction_files = sorted(prediction_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
-        prediction_file_path = prediction_files[-1]
+        if pred_file_path is not None:
+            prediction_file_path = pred_file_path
+            if not os.path.exists(prediction_file_path):
+                print('Invalid prediction file path')
+                prediction_file_path = prediction_files[-1]
+            else:
+                if prediction_file_path.endswith('.npy'):
+                    raw_prediction = np.load(prediction_file_path)
+                elif prediction_file_path.endswith('.las'):
+                    raw_prediction = laspy.read(prediction_file_path).intensity
+
+        else:
+            prediction_file_path = prediction_files[-1]
+            raw_prediction = np.load(prediction_file_path)
         
-        # read the prediction
-        raw_prediction = np.load(prediction_file_path)
+        
         # get the unique semantics 
         unique_semantics = np.unique(raw_prediction)
         # sort the unique semantics
@@ -53,7 +65,6 @@ class ScannetValidation(object):
 
         self.prediction = prediction
         self.ground_truth = ground_truth
-
 
     def __association(self):
         N_labels = np.max(self.ground_truth) + 1
@@ -87,9 +98,51 @@ class ScannetValidation(object):
         print('Precision: ', precision)
         print('F1-score: ', f1_score)
 
+
+    def evaluate2(self, iou_threshold=0.5):
+        """
+        This function calculates the intersection over union (IoU) between the ground truth and the prediction to calculate average precision (AP)
+        """ 
+        ground_truth_associated = self.__association()
+        # get unique labels in the ground truth
+        unique_labels = np.unique(ground_truth_associated)
+
+        # calculate the intersection over union (IoU) between the ground truth and the prediction
+        TP = 0
+        FP = 0
+        for label in unique_labels:
+            # get the indices of the label in the ground truth
+            indices = np.where(ground_truth_associated == label)
+            # get the indices of the label in the prediction
+            prediction_indices = np.where(self.prediction == label)
+            # calculate the intersection
+            intersection = np.intersect1d(indices, prediction_indices)
+            # calculate the union
+            union = np.union1d(indices, prediction_indices)
+            # calculate the IoU
+            IoU = intersection.shape[0] / union.shape[0]
+            #print('IoU for label {}: '.format(label), IoU)
+            if IoU >= iou_threshold:
+                TP += 1
+            else:
+                FP += 1
         
+        # calculate average precision (AP)
+        AP = TP / (TP + FP)
+        print('Average precision (AP): ', AP)
+
     
 if __name__ == '__main__':
     validation = ScannetValidation()
-    validation.read_scene('../../data/scene0000_00')
+    """
+    # without nearest interpolation
+    validation.read_scene('../../data/scene0000_00', remove_background_in_prediction=False)
     validation.evaluate()
+    # with nearest interpolation
+    validation.read_scene('../../data/scene0000_00', '../../data/scene0000_00/associations/semantics/semantics_613_shuffled.las', remove_background_in_prediction=False)
+    validation.evaluate()
+    """
+    # with nearest interpolation and filter
+    validation.read_scene('../../data/scene0000_00', '../../data/scene0000_00/associations/semantics/semantic_613_interpolated_shuffled_filtered.las', remove_background_in_prediction=False)
+    validation.evaluate()
+    validation.evaluate2()

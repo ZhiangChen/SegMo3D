@@ -5,12 +5,17 @@
 
 import os
 import subprocess
+import random
 
 # Define the base directory for the scans_test
 base_dir = "/home/zchen256/semantic_SfM/data/scannet/scans_test"
 
 # Iterate over all files in the directory
 for root, dirs, files in os.walk(base_dir):
+    # randomize the order of the files
+    random.shuffle(files)
+    # keep 5% of the files
+    files = files[:int(0.05*len(files))]
     for file in files:
         if file.endswith(".sens"):
             # Construct the full path to the .sens file

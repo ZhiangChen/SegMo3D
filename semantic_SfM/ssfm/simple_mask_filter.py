@@ -15,12 +15,14 @@ class SimpleMaskFilter(object):
         self.window_size = configs.get('window_size', 5)
         self.depth_folder = configs.get('depth_folder', None)
         self.output_folder = configs.get('output_folder', None)
+        self.area_filter = configs.get('area_filter', True)
         self.area_upper_threshold = configs.get('area_upper_threshold', 9)
         self.area_lower_threshold = configs.get('area_lower_threshold', 0.01)
         self.camera_parameter_file = configs.get('camera_parameter_file', None)
-        #self.focal_length, self.pixel_size = self.read_camera_parameters_agisoft(self.camera_parameter_file)
-        self.focal_length = 0.010689196654678247
-        self.pixel_size = 2.005835530993016e-06
+        if self.area_filter:
+            if self.camera_parameter_file.endswith('.xml'):
+                self.focal_length, self.pixel_size = self.read_camera_parameters_agisoft(self.camera_parameter_file)  # this needs to be checked, might be wrong
+
         self.erosion_kernel_size = configs.get('erosion_kernel_size', 0)
         self.erosion_iteration = configs.get('erosion_iteration', 2)
         self.background_mask = configs.get('background_mask', False)
@@ -122,9 +124,12 @@ class SimpleMaskFilter(object):
         valid_masks_id_maf = self.moving_average_filter(masks)
         if self.erosion_kernel_size > 0:
             masks = self.erode_mask(masks)
-        valid_masks_id_asf = self.area_size_filter(masks, file_name)
-        valid_masks_id = np.intersect1d(valid_masks_id_maf, valid_masks_id_asf)
-        if self.background_mask:
+        if self.area_filter:
+            valid_masks_id_asf = self.area_size_filter(masks, file_name)
+            valid_masks_id = np.intersect1d(valid_masks_id_maf, valid_masks_id_asf)
+        else:
+            valid_masks_id = valid_masks_id_maf
+        if self.background_mask: 
             if np.max(masks) not in valid_masks_id:
                 valid_masks_id = np.append(valid_masks_id, np.max(masks))
         filtered_masks = np.zeros_like(masks) - 1

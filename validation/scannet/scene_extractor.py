@@ -213,19 +213,46 @@ class SceneExtractor(object):
         np.save(os.path.join(self.associations_folder_path, 'semantic_points.npy'), semantic_points)
 
 
-def batch_extract_scenes(scene_dir, save_dir):
+def batch_extract_scenes(scene_dir, save_dir, training=False):
     # iterate over folders in scene_dir
     for scene_folder in os.listdir(scene_dir):
         scene_folder_path = os.path.join(scene_dir, scene_folder)
         save_folder_path = os.path.join(save_dir, scene_folder)
-        if not os.path.exists(save_folder_path):
-            os.makedirs(save_folder_path)
-        scene_extractor = SceneExtractor(scene_folder_path, save_folder_path)
-        scene_extractor.extract_photos()
-        scene_extractor.extract_depths()
-        #scene_extractor.extract_segmentations()
-        scene_extractor.extract_reconstruction()
-        #scene_extractor.extract_ground_truth()
+        output_folder_path = os.path.join(scene_folder_path, 'output')
+        # skip if already extracted
+        if os.path.exists(save_folder_path):
+            print(f'Scene {scene_folder} already extracted')
+            continue
+        # check if there are any files under output folder
+        if not os.path.exists(output_folder_path):
+            print(f'No output folder for scene {scene_folder}')
+            continue
+        else:
+            color_folder_path = os.path.join(output_folder_path, 'color')
+            if not os.path.exists(color_folder_path):
+                print(f'No color folder in output folder for scene {scene_folder}')
+                continue
+            photo_files = os.listdir(os.path.join(output_folder_path, 'color'))
+            if len(photo_files) == 0:
+                print(f'No photos in output folder for scene {scene_folder}')
+                continue
+            else:
+                if not os.path.exists(save_folder_path):
+                    os.makedirs(save_folder_path)
+                try:
+                    scene_extractor = SceneExtractor(scene_folder_path, save_folder_path)
+                    print(f'Extracting scene {scene_folder}')
+                    scene_extractor.extract_photos()
+                    scene_extractor.extract_depths()
+                    scene_extractor.extract_reconstruction()
+                    if training:
+                        scene_extractor.extract_segmentations()
+                        scene_extractor.extract_ground_truth()
+                    else:
+                        pass
+                except Exception as e:
+                    print(f'Error in extracting scene {scene_folder}: {e}')
+                    continue
 
 
 
@@ -240,6 +267,8 @@ if __name__ == '__main__':
     # #scene_extractor.extract_reconstruction()
     # scene_extractor.extract_ground_truth()
 
-    scene_dir = '../../data/scannet/scans_test'
-    save_dir = '../../data/scannet/ssfm'
-    batch_extract_scenes(scene_dir, save_dir)
+    #scene_dir = '../../data/scannet/scans_test'
+    #save_dir = '../../data/scannet/ssfm'
+    scene_dir = '../../data/scannet/scans'
+    save_dir = '../../data/scannet/ssfm_train'
+    batch_extract_scenes(scene_dir, save_dir, training=True)

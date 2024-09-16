@@ -2,9 +2,45 @@ from ssfm.files import *
 import laspy
 import numpy as np
 from scipy.spatial import cKDTree
+import matplotlib.pyplot as plt
 
 
-def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, nearest_interpolation=False):
+def filter_semantics(semantics, ratio, MIN_num_semantics):
+    """
+    Filter the semantics by keeping the semantics with the highest counts.
+    
+    Parameters
+    ----------
+    semantics : numpy array, the semantics to filter
+    ratio : float, the ratio of semantics to keep
+    MIN_num_semantics : int, the minimum number of semantics to keep
+    
+    Returns
+    -------
+    numpy array, the filtered semantics
+    """
+    # get the unique semantics and their counts
+    unique_semantics, semantic_counts = np.unique(semantics, return_counts=True)
+    # get the number of unique semantics
+    num_unique_semantics = unique_semantics.shape[0]
+    # get the number of semantics to keep
+    num_semantics_to_keep = int(num_unique_semantics * ratio)
+    if num_semantics_to_keep < MIN_num_semantics:
+        num_semantics_to_keep = MIN_num_semantics
+    # get the indices of the semantics to keep
+    indices = np.argsort(semantic_counts)[-num_semantics_to_keep:]
+    # get the semantics to keep
+    semantics_to_keep = unique_semantics[indices]
+    # get the indices of the semantics to remove
+    indices = np.where(np.isin(semantics, semantics_to_keep, invert=True))
+    # remove the semantics
+    semantics[indices] = -1
+    return semantics
+
+
+
+
+def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, nearest_interpolation=False, filter_random_semantics=True, ratio=0.50, MIN_num_semantics=100):
     """
     Add semantics to the point cloud and save it as a .las file.
 
@@ -14,6 +50,9 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
     semantics_path : str, the path to the semantics file
     save_las_path : str, the path to save the .las file
     nearest_interpolation : False, not to use nearest interpolation to assign semantics to the unlabeled points; positive integer, the number of nearest neighbors to use for nearest interpolation
+    filter_semantics : True, to filter the semantics; False, not to filter the semantics
+    ratio : 0.12, the ratio of semantics to keep
+    MIN_num_semantics : 100, the minimum number of semantics to keep
 
     Returns
     -------
@@ -25,10 +64,16 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
         points, colors = read_mesh_file(pointcloud_path)
         colors = colors * 255
 
+    
     semantics = np.load(semantics_path)
 
     print('maximum of semantics: ', semantics.max())
     print('number of unique semantics: ', len(np.unique(semantics)))
+
+    
+    if filter_random_semantics:
+        semantics = filter_semantics(semantics, ratio=ratio, MIN_num_semantics=MIN_num_semantics)
+
 
     # construct a .las file
     hdr = laspy.LasHeader(version="1.2", point_format=3)
@@ -79,6 +124,7 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
     las.write(save_las_path)
 
 
+
 class PostProcessing(object):
     def __init__(self, semantic_pc_file_path) -> None:
         # assert if the semantic pointcloud file exists
@@ -121,7 +167,6 @@ class PostProcessing(object):
         # Apply the mapping to self.semantics
         self.semantics = index_mapping[self.semantics]
 
-
             
     def save_semantic_pointcloud(self, save_las_path):
         # construct a .las file
@@ -157,13 +202,26 @@ if __name__ == "__main__":
     save_las_path = '../../data/box_canyon_park/semantic_model_shuffled.las'
     post_processing.save_semantic_pointcloud(save_las_path)
     """
+    #"""
     pointcloud_path = '../../data/scannet/ssfm/scene0707_00/reconstructions/mesh_vertices_color.npy'
-    semantics_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantics_243.npy'
-    save_las_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantic_243_interpolated.las'
-    add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, nearest_interpolation=5)
+    semantics_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantics_276.npy'
+    save_las_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantic_276_interpolated.las'
+    add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, nearest_interpolation=5, filter_random_semantics=True, ratio=0.1, MIN_num_semantics=80)
 
     semantic_pc_file_path = save_las_path
     post_processing = PostProcessing(semantic_pc_file_path)
     post_processing.shuffle_semantic_ids()
-    save_las_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantic_243_interpolated_shuffled.las'
+    save_las_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantic_276_interpolated_shuffled.las'
     post_processing.save_semantic_pointcloud(save_las_path)
+    """
+    pointcloud_path = '../../data/scene0000_00/reconstructions/mesh_vertices_color.npy'
+    semantics_path = '../../data/scene0000_00/associations/semantics/semantics_613.npy'
+    save_las_path = '../../data/scene0000_00/associations/semantics/semantic_613_interpolated.las'
+    add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, nearest_interpolation=5, filter_random_semantics=False, ratio=0.5, MIN_num_semantics=80)
+
+    semantic_pc_file_path = save_las_path
+    post_processing = PostProcessing(semantic_pc_file_path)
+    post_processing.shuffle_semantic_ids()
+    save_las_path = '../../data/scene0000_00/associations/semantics/semantic_613_interpolated_shuffled_filtered.las'
+    post_processing.save_semantic_pointcloud(save_las_path)
+    """
