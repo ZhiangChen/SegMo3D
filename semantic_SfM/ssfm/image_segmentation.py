@@ -1,4 +1,3 @@
-from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
 import os
 import cv2
 import pickle
@@ -57,13 +56,14 @@ class ImageSegmentation(object):
 
         self.configs = configs
 
-        model_pool = ['sam', 'sam_hq']
+        model_pool = ['sam', 'sam_hq', 'sam2']
 
         model_name = configs['model_name']
 
         if model_name not in model_pool:
             raise NotImplementedError('Model not implemented.')
         elif model_name == 'sam':
+            from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
             assert os.path.exists(configs['model_path']), 'Model path does not exist.'
 
             sam_checkpoint = configs['model_path']
@@ -86,6 +86,7 @@ class ImageSegmentation(object):
             )
 
         elif model_name == 'sam_hq':
+            from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
             assert os.path.exists(configs['model_path']), 'Model path does not exist.'
 
             sam_checkpoint = configs['model_path']
@@ -106,6 +107,37 @@ class ImageSegmentation(object):
                 stability_score_thresh=stability_score_thresh,
                 crop_n_layers = crop_n_layers
             )
+
+        elif model_name == 'sam2':
+            from sam2.build_sam import build_sam2
+            from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+            model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
+
+            sam2_checkpoint = configs['model_path']
+            assert os.path.exists(sam2_checkpoint), 'Model path does not exist.'
+
+            device = configs['device']
+            points_per_side = configs.get('points_per_side', 32)
+            points_per_batch = configs.get('points_per_batch', 128)
+            pred_iou_thresh = configs.get('pred_iou_thresh', 0.6)
+            stability_score_thresh = configs.get('stability_score_thresh', 0.96)
+            stability_score_offset = configs.get('stability_score_offset', 0.5)
+            box_nms_thresh = configs.get('box_nms_thresh', 0.6)
+            use_m2m = configs.get('use_m2m', True)
+
+            sam2 = build_sam2(model_cfg, sam2_checkpoint, device=device, apply_postprocessing=False)
+
+            self.mask_generator = SAM2AutomaticMaskGenerator(
+                model=sam2,
+                points_per_side=points_per_side,
+                points_per_batch=points_per_batch,
+                pred_iou_thresh=pred_iou_thresh,
+                stability_score_thresh=stability_score_thresh,
+                stability_score_offset=stability_score_offset,
+                box_nms_thresh=box_nms_thresh,
+                use_m2m=use_m2m,
+            )
+
 
         self.distortion_params = None
 
@@ -156,6 +188,9 @@ class ImageSegmentation(object):
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             masks = self.mask_generator.generate(image)
         elif self.configs['model_name'] == 'sam_hq':
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            masks = self.mask_generator.generate(image)
+        elif self.configs['model_name'] == 'sam2':
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             masks = self.mask_generator.generate(image)
         else:

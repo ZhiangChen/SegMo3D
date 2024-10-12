@@ -142,6 +142,33 @@ def read_camera_extrinsics_webodm(file_path):
 
     return cameras
 
+def read_camera_parameters_kubric(scene_folder_path):
+    # check if the folder exists
+    assert os.path.exists(scene_folder_path), 'Scene folder does not exist!'
+    camera_file_path = os.path.join(scene_folder_path, 'reconstructions/cameras.npy')
+    # load the npy file
+    cameras = np.load(camera_file_path, allow_pickle=True).item()
+    # get the camera parameters from any image
+    camera = cameras[list(cameras.keys())[0]]
+    # get the intrinsic matrix
+    intrinsic_matrix = camera['intrinsics']
+    # get the width and height of the image
+    width = camera['width']
+    height = camera['height']
+    
+    intrinsic_matrix = np.abs(intrinsic_matrix)
+
+    # construct a new camera structure 
+    new_cameras = dict()
+    new_cameras['width'] = width
+    new_cameras['height'] = height
+    new_cameras['K'] = intrinsic_matrix
+
+    for key, value in cameras.items():
+        new_cameras[key] = value['extrinsics']
+
+    return new_cameras
+
 
 def read_camera_parameters_webodm(intrinsic_file_path, extrinsic_file_path):
     intrinsic_matrix, distortion_params = read_camera_intrinsics_webodm(intrinsic_file_path)

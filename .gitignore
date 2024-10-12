@@ -2,6 +2,7 @@
 *.log
 *.las
 *.pth
+*.pt
 
 data/
 ./temp/

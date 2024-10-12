@@ -195,6 +195,20 @@ class PointcloudProjection(DepthImageRendering):
         self.camera_intrinsics_color = self.cameras['K'] 
         self.image_height = self.cameras['height']
         self.image_width = self.cameras['width']
+
+    def read_kubric_camera_parameters(self, scene_folder_path):
+        """
+        Arguments:
+            scene_folder_path (str): Path to the scene folder.
+        """
+        self.ssfm_scene_folder_path = scene_folder_path
+        self.cameras = read_camera_parameters_kubric(scene_folder_path)
+        self.camera_intrinsics_color = self.cameras['K']
+        self.image_height = self.cameras['height']
+        self.image_width = self.cameras['width']
+        self.sfm_software = "Kubric"
+        self.tri_mesh = "depth_images"
+        
         
     def read_scannet_camera_parameters(self, ssfm_scene_folder_path):
         """
@@ -243,6 +257,8 @@ class PointcloudProjection(DepthImageRendering):
         # Drop the homogeneous component (w)
         points_camera_space = points_transformed[:, :3]
 
+        #self.points_camera_space = points_camera_space.copy()
+
         points_projected_d = np.matmul(points_camera_space, self.camera_intrinsics_color.T)
         points_projected = points_projected_d / points_projected_d[:, -1].reshape(-1, 1)
         # replace depth 
@@ -264,7 +280,7 @@ class PointcloudProjection(DepthImageRendering):
                 # Get depth image from mesh
                 depth_mesh = self.render_depth_image(frame_key)
         
-        z_buffer = depth_mesh + self.depth_filtering_threshold
+            z_buffer = depth_mesh + self.depth_filtering_threshold
             
         image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
 
@@ -341,7 +357,7 @@ class PointcloudProjection(DepthImageRendering):
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    site = 'scannet'  # 'box_canyon', 'courtright', 'scannet'
+    site = 'kubric'  # 'box_canyon', 'courtright', 'scannet', 'kubric'
 
     single_projection_flag = True  # True: project semantics from one image to the point cloud.
 
@@ -358,7 +374,6 @@ if __name__ == "__main__":
             pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml')
             pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
             pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
-            
             
             pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0313.npy')
             image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0313.JPG')
@@ -381,6 +396,8 @@ if __name__ == "__main__":
             pointcloud_projector.read_mesh('../../data/courtright/SfM_products/agisoft_model.obj')
             pointcloud_projector.read_pointcloud('../../data/courtright/SfM_products/agisoft_model.las')
             pointcloud_projector.read_segmentation('../../data/courtright/segmentations_filtered/DJI_0576.npy')
+            print('Camera intrinsics: \n', pointcloud_projector.camera_intrinsics_color)
+            print('Camera extrinsics: \n', pointcloud_projector.cameras['DJI_0576.JPG'])
             t1 = time.time()
             print('Time for reading data: ', t1 - t0)
             image, pixel2point, point2pixel  = pointcloud_projector.project('DJI_0576.JPG')
@@ -419,6 +436,37 @@ if __name__ == "__main__":
             print('Time for adding colors: ', t3 - t2)
 
             write_las(pointcloud_projector.points, colors, "../../data/scene0000_00/scene0000_00.las")
+            t4 = time.time()
+            print('Time for writing las: ', t4 - t3)
+
+        elif site == 'kubric':
+            # project the point cloud
+            t0 = time.time()
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.1)
+            pointcloud_projector.read_kubric_camera_parameters('../../data/kubric_0')
+            pointcloud_projector.read_pointcloud('../../data/kubric_0/reconstructions/combined_point_cloud.las')
+            pointcloud_projector.read_segmentation('../../data/kubric_0/segmentations_gt/5.npy')
+            t1 = time.time()
+            print('Time for reading data: ', t1 - t0)
+
+
+            image, pixel2point, point2pixel  = pointcloud_projector.project('5.png')
+            t2 = time.time()
+            print('Time for projection: ', t2 - t1)
+            # add color to points
+            radius = 2
+            decaying = 2
+            colors = pointcloud_projector.colors.astype(np.int64)
+            colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+            t3 = time.time()
+            print('Time for adding colors: ', t3 - t2)
+
+            print(colors.max())
+
+            write_las(pointcloud_projector.points, colors, "../../data/kubric_0/5.las")
+
+            #write_las(pointcloud_projector.points_camera_space, colors, "../../data/kubric_0/0_camera_space.las")
+
             t4 = time.time()
             print('Time for writing las: ', t4 - t3)
 

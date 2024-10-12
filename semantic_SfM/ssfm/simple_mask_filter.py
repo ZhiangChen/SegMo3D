@@ -8,7 +8,54 @@ from scipy import ndimage
 
 from joblib import Parallel, delayed
 from tqdm import tqdm
+import os
+from skimage.morphology import dilation, square  
 
+
+class AreaFilter(object):
+    def __init__(self):
+        pass
+
+    def __call__(self, config):
+        area_upper_threshold = config.get('area_upper_threshold', np.inf)  # in pixels
+        area_lower_threshold = config.get('area_lower_threshold', 0)  # in pixels
+        segmentation_folder_path = config.get('segmentation_folder_path', None)
+        output_folder_path = config.get('output_folder_path', None)
+        num_processes = config.get('num_processes', 8)
+
+        assert segmentation_folder_path is not None, "Segmentation folder path is not provided"
+        os.makedirs(output_folder_path, exist_ok=True)
+
+        # Get list of segmentation files
+        segmentation_files = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if f.endswith('.npy')]
+
+        # Process files in parallel
+        Parallel(n_jobs=num_processes)(delayed(self.process_file)(segmentation_file, area_lower_threshold, area_upper_threshold, output_folder_path) for segmentation_file in tqdm(segmentation_files))
+
+    def process_file(self, segmentation_file, area_lower_threshold, area_upper_threshold, output_folder_path):
+        """
+        Function to process a single segmentation file.
+        """
+        valid_objects = []
+        masks = np.load(segmentation_file)
+        file_name = os.path.basename(segmentation_file)
+
+        # Find valid objects based on area thresholds
+        for i in range(np.max(masks) + 1):
+            mask_area = np.sum(masks == i)
+            if area_lower_threshold < mask_area < area_upper_threshold:
+                valid_objects.append(i)
+
+        # Create filtered masks
+        valid_objects = np.array(valid_objects)
+        filtered_masks = np.full_like(masks, -1)  # Initialize with -1
+        for i, mask_id in enumerate(valid_objects):
+            filtered_masks[masks == mask_id] = i
+
+        # Save the result to the output folder
+        output_file_path = os.path.join(output_folder_path, file_name)
+        np.save(output_file_path, filtered_masks)
+    
 
 class SimpleMaskFilter(object):
     def __init__(self, configs) -> None:

@@ -17,19 +17,23 @@ class KeyimageAssociationsBuilder(object):
         pixel2point_folder_path = os.path.join(read_folder_path, 'pixel2point')
         assert os.path.exists(pixel2point_folder_path), 'Pixel2point folder path does not exist.'
         self.pixel2point_file_paths = [os.path.join(pixel2point_folder_path, f) for f in os.listdir(pixel2point_folder_path) if f.endswith('.npy')]
-        self.pixel2point_file_paths.sort()
+        # sort the pixel2point_file_paths based on the numbers in the file names using the lambda function
+        self.pixel2point_file_paths = sorted(self.pixel2point_file_paths, key=lambda x: int(os.path.basename(x)[:-4]))
         self.N_images = len(self.pixel2point_file_paths)
         
         # get the number of points
         point2pixel_folder_path = os.path.join(read_folder_path, 'point2pixel')  
         assert os.path.exists(point2pixel_folder_path), 'Point2pixel folder path does not exist.'  
         self.point2pixel_file_paths = [os.path.join(point2pixel_folder_path, f) for f in os.listdir(point2pixel_folder_path) if f.endswith('.npy')]  
+        # sort the point2pixel_file_paths based on the numbers in the file names using the lambda function
+        self.point2pixel_file_paths = sorted(self.point2pixel_file_paths, key=lambda x: int(os.path.basename(x)[:-4]))
         point2pixel = np.load(self.point2pixel_file_paths[0])
         self.N_points = point2pixel.shape[0]
 
         assert os.path.exists(segmentation_folder_path), 'Segmentation folder path does not exist.'
         self.segmentation_file_paths = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if (f.endswith('.npy') and f in os.listdir(pixel2point_folder_path))]
-        self.segmentation_file_paths.sort()
+        # sort the segmentation_file_paths based on the numbers in the file names
+        self.segmentation_file_paths = sorted(self.segmentation_file_paths, key=lambda x: int(os.path.basename(x)[:-4]))
 
         # check if the number of images is the same
         assert len(self.segmentation_file_paths) == self.N_images, 'The number of images is not the same as the number of segmentation files.'

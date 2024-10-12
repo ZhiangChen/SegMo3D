@@ -8,7 +8,8 @@ import numpy as np
 from collections import defaultdict
 import logging
 import yaml
-
+from collections import Counter
+from tqdm import tqdm
 
 def group_lists(lists):
     """
@@ -182,20 +183,23 @@ class ObjectRegistration(object):
             self.associations_pixel2point_path = os.path.join(self.association_folder_path, 'pixel2point')
             assert os.path.exists(self.associations_pixel2point_path), 'Association pixel2point folder path does not exist.'
             self.associations_pixel2point_file_paths = [os.path.join(self.associations_pixel2point_path, f) for f in os.listdir(self.associations_pixel2point_path) if f.endswith('.npy')]
-            self.associations_pixel2point_file_paths.sort()
+            # sort the association files based on the number in the file name
+            self.associations_pixel2point_file_paths = sorted(self.associations_pixel2point_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0]))
 
             # Load point2pixel association files (.npy) and sort them
             # check if the folder exists
             self.associations_point2pixel_path = os.path.join(self.association_folder_path, 'point2pixel')
             assert os.path.exists(self.associations_point2pixel_path), 'Association point2pixel folder path does not exist.'
             self.associations_point2pixel_file_paths = [os.path.join(self.associations_point2pixel_path, f) for f in os.listdir(self.associations_point2pixel_path) if f.endswith('.npy')]
-            self.associations_point2pixel_file_paths.sort()
+            # sort the association files based on the number in the file name
+            self.associations_point2pixel_file_paths = sorted(self.associations_point2pixel_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0]))
 
             # Load segmentation files (.npy) and sort them
             # check if the folder exists
             assert os.path.exists(self.segmentation_folder_path), 'Segmentation folder path does not exist.'
             self.segmentation_file_paths = [os.path.join(self.segmentation_folder_path, f) for f in os.listdir(self.segmentation_folder_path) if f.endswith('.npy')]
-            self.segmentation_file_paths.sort()   
+            # sort the segmentation files based on the number in the file name
+            self.segmentation_file_paths = sorted(self.segmentation_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0]))
 
         else:
             keyimage_yaml_path = os.path.join(self.association_folder_path, keyimage_yaml_name)
@@ -245,8 +249,33 @@ class ObjectRegistration(object):
 
         # pre-compute gaussian weights
         self.radius = 2
-        self.decaying = 2
+        self.decaying = 1
         self.likelihoods = compute_gaussian_likelihood(radius=self.radius, decaying=self.decaying)
+
+        self.registered_object_manager = dict()  # the key is the image id and object id; the value is the registered object id
+        self.image_id = 0
+
+    
+    def update_object_manager2(self, object_id, key_image, object2_id_image2, intersected_points):
+        if intersected_points is None:
+            registered_objects_id = None
+        else:
+            registered_objects_id = self.registered_object_manager[(key_image, object2_id_image2)]
+
+        if object_id not in self.object_manager.keys():
+            if registered_objects_id == None:
+                self.object_manager[object_id] = []
+            else:
+                self.object_manager[object_id] = [registered_objects_id]
+        else:
+            if registered_objects_id == None:
+                pass
+            else:
+                if registered_objects_id not in self.object_manager[object_id]:
+                    self.object_manager[object_id].append(registered_objects_id)
+                else:
+                    pass
+        
 
     def update_object_manager(self, object_id, intersected_points):
         if intersected_points is None:
@@ -308,12 +337,17 @@ class ObjectRegistration(object):
                 else:
                     pass
         
-        # check the length of values in self.object_manager
+        # update registered_object_manager
         for object_id, registered_object_ids in self.object_manager.items():
+            # check the length of values in self.object_manager
             if len(registered_object_ids) > 1:
                 raise ValueError('The length of registered_object_ids is not 1.')
             else:
-                pass
+                if len(registered_object_ids) == 0:
+                    registered_object_id = object_id + self.latest_registered_id
+                else:
+                    registered_object_id = registered_object_ids[0]
+                self.registered_object_manager[(self.image_id, object_id)] = registered_object_id
             
         for purge_object_id, keep_object_id in purge_object_id_map.items():
             purge = self.pc_segmentation_ids == purge_object_id
@@ -361,27 +395,21 @@ class ObjectRegistration(object):
                                     self.pc_segmentation_ids, 
                                     self.pc_segmentation_probs)
         
-        # test
-        # make a copy of self.object_manager
-        object_manager_copy = self.object_manager.copy()
-        for i, (object_id, registered_object_ids) in enumerate(object_manager_copy.items()):
-            if registered_object_ids == []:
-                object_manager_copy[object_id] = [object_id + self.latest_registered_id]
-            else:
-                object_manager_copy[object_id] = registered_object_ids
-
-        # log object_manager_copy
-        if self.loginfo:
-            self.logger.info('    object_manager_copy: {}'.format(object_manager_copy))
-
-        # test end
                 
         self.latest_registered_id += len(self.normalized_likelihoods)
+
+    def save_prob_semantics(self):
+        # save pc_segmentation_ids and pc_segmentation_probs 
+        pc_segmentation_save_path = os.path.join(self.association_folder_path, 'semantics', str(self.image_id) + '_segmentation_ids.npy')
+        np.save(pc_segmentation_save_path, self.pc_segmentation_ids)
+        pc_segmentation_probs_save_path = os.path.join(self.association_folder_path, 'semantics', str(self.image_id) + '_segmentation_probs.npy')
+        np.save(pc_segmentation_probs_save_path, self.pc_segmentation_probs)
 
     def save_semantics(self, save_semantics_path):
         max_prob_indices = np.argmax(self.pc_segmentation_probs, axis=1)
         semantics = self.pc_segmentation_ids[np.arange(len(max_prob_indices)), max_prob_indices]
         np.save(save_semantics_path, semantics)
+
 
     def save_semantic_pointcloud(self, save_las_path):
         max_prob_indices = np.argmax(self.pc_segmentation_probs, axis=1)
@@ -441,6 +469,7 @@ class ObjectRegistration(object):
         pixel_object2_image2 = np.argwhere(segmented_objects_image2 == max_count_id)
         return max_count_id, pixel_object2_image2
     
+
     def calculate_3D_IoU(self, point_object1_image2, point_object2_image1):
         """
         Calculate 3D IoU between object1 in image2 and object2 in image1.
@@ -483,11 +512,12 @@ class ObjectRegistration(object):
         self.pc_segmentation_ids = -np.ones((self.N_points, self.M_segmentation_ids), dtype=np.int32)
         self.pc_segmentation_probs = np.zeros((self.N_points, self.M_segmentation_ids), dtype=np.float32)
 
-        for image_id in range(N_images):
+        for image_id in tqdm(range(N_images), desc="Processing images"):
+            self.image_id = image_id
             # logging the current, total number images, and image name
             if self.loginfo:
                 self.logger.info(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')
-                print(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')    
+                #print(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')    
 
             t1 =   time.time()
             # load segmentation and association files
@@ -503,8 +533,6 @@ class ObjectRegistration(object):
             self.associations_pixel2point.append(associations1_pixel2point)
             self.associations_point2pixel.append(associations1_point2pixel)
 
-            # create a segmentation mask for segmentation_objects_image1 with boolean data type, where True indicates the object id is not -1
-            #segmentation_mask1 = segmented_objects_image1 != -1
 
             # pre-compute padded segmentation and normalized likelihoods
             image_height, image_width = segmented_objects_image1.shape
@@ -517,14 +545,13 @@ class ObjectRegistration(object):
             self.object_manager = dict()  # the key is the object id and the value is a list of registered object ids.
 
             for object_id in range(N_objects):
-
                 pixel_object1_image1_bool = segmented_objects_image1 == object_id
                 
                 point_object1_image1 = associations1_pixel2point[pixel_object1_image1_bool] # point_object1_image1 is a list of point ids
-                # remove -1 from point_object1_image1
                 point_object1_image1 = point_object1_image1[point_object1_image1 != -1]
                 point_object1_image1_bool = np.zeros(self.N_points, dtype=bool)
                 point_object1_image1_bool[point_object1_image1] = True
+                
 
                 # get the keyimages of object_id
                 if image_id == 0:
@@ -571,7 +598,8 @@ class ObjectRegistration(object):
                                 self.logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
 
                             if iou >= iou_threshold:
-                                self.update_object_manager(object_id, intersected_points)
+                                #self.update_object_manager(object_id, intersected_points)
+                                self.update_object_manager2(object_id, key_image, object2_id_image2, intersected_points)
                             else:
                                 self.update_object_manager(object_id, None)
             
