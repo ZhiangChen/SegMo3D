@@ -7,6 +7,8 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 import open3d as o3d
 import json
+import shutil
+import random
 
 class SceneExtractor(object):
     def __init__(self, scene_dir, save_dir, extract_scene_folder='output'):
@@ -44,13 +46,24 @@ class SceneExtractor(object):
 
     def extract_photos(self):
         scannet_photo_folder_path = os.path.join(self.extract_scene_folder_path, 'color')
-        # move all photos in scannet_photo_folder_path to self.photo_folder_path
+        
+        # Copy all photos in scannet_photo_folder_path to self.photo_folder_path
         for file in os.listdir(scannet_photo_folder_path):
             if file.endswith('.jpg'):
-                os.rename(os.path.join(scannet_photo_folder_path, file), os.path.join(self.photo_folder_path, file))
+                shutil.copy(os.path.join(scannet_photo_folder_path, file), os.path.join(self.photo_folder_path, file))
         
-        # print the number of photos extracted
+        # Print the number of photos copied
         print(f'Extracted {len(os.listdir(self.photo_folder_path))} photos')
+
+    # def extract_photos(self):
+    #     scannet_photo_folder_path = os.path.join(self.extract_scene_folder_path, 'color')
+    #     # move all photos in scannet_photo_folder_path to self.photo_folder_path
+    #     for file in os.listdir(scannet_photo_folder_path):
+    #         if file.endswith('.jpg'):
+    #             os.rename(os.path.join(scannet_photo_folder_path, file), os.path.join(self.photo_folder_path, file))
+        
+    #     # print the number of photos extracted
+    #     print(f'Extracted {len(os.listdir(self.photo_folder_path))} photos')
 
     def extract_depths(self):
         scannet_depth_folder_path = os.path.join(self.extract_scene_folder_path, 'depth')
@@ -214,11 +227,21 @@ class SceneExtractor(object):
 
 
 def batch_extract_scenes(scene_dir, save_dir, training=False):
+    validation_dataset = True
+    if validation_dataset:
+        valid_scene_names = [scene[:-4] for scene in os.listdir('../../data/scannet200/val')]
+
     # iterate over folders in scene_dir
     for scene_folder in os.listdir(scene_dir):
         scene_folder_path = os.path.join(scene_dir, scene_folder)
         save_folder_path = os.path.join(save_dir, scene_folder)
         output_folder_path = os.path.join(scene_folder_path, 'output')
+        random_extraction = False
+        if random_extraction & (random.random() > 0.1):
+            continue
+        if validation_dataset:
+            if scene_folder not in valid_scene_names:
+                continue
         # skip if already extracted
         if os.path.exists(save_folder_path):
             print(f'Scene {scene_folder} already extracted')
@@ -270,5 +293,5 @@ if __name__ == '__main__':
     #scene_dir = '../../data/scannet/scans_test'
     #save_dir = '../../data/scannet/ssfm'
     scene_dir = '../../data/scannet/scans'
-    save_dir = '../../data/scannet/ssfm_train'
+    save_dir = '../../data/scannet/ssfm_valid'
     batch_extract_scenes(scene_dir, save_dir, training=True)

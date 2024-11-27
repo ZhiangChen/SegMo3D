@@ -212,18 +212,23 @@ class ImageSegmentation(object):
             os.makedirs(save_folder_path)
 
         # predict and save npy
+        predicted_images = []
         total = len(image_paths)
         for i, image_path in enumerate(image_paths):
-            print('Processing image {}/{}.'.format(i+1, total))
+            #print('Processing image {}/{}.'.format(i+1, total))
             save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '.npy')
             # skip if the file already exists
             if os.path.exists(save_path):
                 continue
             masks = self.predict(image_path, maximum_size)
-            self.save_npy(masks, save_path)
+            result = self.save_npy(masks, save_path)
             if save_overlap:
                 overlap_save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '_overlap.png')
                 self.save_overlap(self.image, masks, overlap_save_path)
+            if result:
+                predicted_images.append(image_path)
+
+        return predicted_images
 
     def save_overlap(self, image, masks, save_path):
         """
@@ -234,7 +239,7 @@ class ImageSegmentation(object):
         Note that the saved image is a 3-channel image with the maximum size of maxium_size. The images and masks are resized to the maximum size.
         """
         if len(masks) == 0:
-            raise ValueError('No masks to save.')
+            #raise ValueError('No masks to save.')
             return
         else:
             sorted_anns = sorted(masks, key=(lambda x: x['area']), reverse=True)
@@ -267,8 +272,8 @@ class ImageSegmentation(object):
             If the pixel does not belong to any mask, the value is -1.
         """
         if len(masks) == 0:
-            raise ValueError('No masks to save.')
-            return
+            #raise ValueError('No masks to save.')
+            return False
         else:
             sorted_anns = sorted(masks, key=(lambda x: x['area']), reverse=True)
 
@@ -293,6 +298,8 @@ class ImageSegmentation(object):
             img = img.astype(np.int16)
 
             np.save(save_path, img)
+
+            return True
 
 class ParallelImageSegmentation(object):
     def __init__(self, configs):

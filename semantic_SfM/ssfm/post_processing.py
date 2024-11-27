@@ -40,7 +40,7 @@ def filter_semantics(semantics, ratio, MIN_num_semantics):
 
 
 
-def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, remove_small_N=0, nearest_interpolation=False):
+def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, remove_small_N=0, nearest_interpolation=0):
     """
     Add semantics to the point cloud and save it as a .las file.
 
@@ -50,7 +50,7 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
     semantics_path : str, the path to the semantics file
     save_las_path : str, the path to save the .las file
     remove_small_N : int, remove the semantics with numbers smaller than N
-    nearest_interpolation : False, not to use nearest interpolation to assign semantics to the unlabeled points; positive integer, the number of nearest neighbors to use for nearest interpolation
+    nearest_interpolation : 0, not to use nearest interpolation to assign semantics to the unlabeled points; positive integer, the number of nearest neighbors to use for nearest interpolation
 
     Returns
     -------
@@ -78,6 +78,7 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
 
     print("After removing small semantics: ")
     print('number of unique semantics: ', len(np.unique(semantics)))
+            
 
     # construct a .las file
     hdr = laspy.LasHeader(version="1.2", point_format=3)
@@ -97,9 +98,9 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
     las.blue = colors[:, 2]
 
     # Add semantics
-    if nearest_interpolation is False:
+    if nearest_interpolation == 0:
         las.intensity = semantics
-    else:
+    elif nearest_interpolation > 0:
         # labeled points are the points with semantics >=0; unlabeled points are the points with semantics < 0
         labeled_points = points[semantics >= 0]
         labeled_semantics = semantics[semantics >= 0]
@@ -121,6 +122,9 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
         combined_semantics[semantics < 0] = unlabeled_semantics
 
         las.intensity = combined_semantics
+    
+    else:
+        raise ValueError("nearest_interpolation should be a non-negative integer")
 
     # Write the LAS file
     las.write(save_las_path)
@@ -153,6 +157,8 @@ class PostProcessing(object):
 
         # get the unique semantics and their counts
         self.unique_semantics, self.semantic_counts = np.unique(self.semantics, return_counts=True)
+        # enlarge the type of the unique semantics
+        self.unique_semantics = self.unique_semantics.astype(int)
 
         # get the number of unique semantics
         self.num_unique_semantics = self.unique_semantics.shape[0]
@@ -162,7 +168,7 @@ class PostProcessing(object):
     def shuffle_semantic_ids(self, exclude_largest_semantic=False):
         shuffled_indices = np.random.permutation(self.num_unique_semantics)
         # Create a mapping from old indices to new indices
-        index_mapping = np.zeros(max(self.unique_semantics) + 1, dtype=int)
+        index_mapping = np.zeros(int(max(self.unique_semantics) + 1), dtype=int)
         index_mapping[self.unique_semantics] = shuffled_indices
         # Save the index of the background in semantics
         background_index = np.where(self.semantics == -1)

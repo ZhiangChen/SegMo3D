@@ -1,17 +1,18 @@
 import numpy as np
 import os
 import laspy
+from joblib import Parallel, delayed
 
 class ScannetValidation(object):
-    def __init__(self) -> None:
-        pass
-
-    def read_scene(self, scene_folder_path, pred_file_path=None, remove_background_in_prediction=True):
+    def __init__(self, scene_folder_path, prediction_path=None) -> None:
         assert os.path.exists(scene_folder_path), 'Scene folder does not exist!'
 
         # read the ground truth
         ground_truth_file_path = os.path.join(scene_folder_path, 'associations', 'semantic_points.npy')
         ground_truth = np.load(ground_truth_file_path)
+
+        print('Unique semantics in the ground truth: ', np.unique(ground_truth).shape[0])
+
 
         # get the prediction files
         prediction_folder_path = os.path.join(scene_folder_path, 'associations', 'semantics')
@@ -19,130 +20,132 @@ class ScannetValidation(object):
 
         # sort prediction files based on the number in the file name: semantics_0.npy, semantics_1.npy, ...
         prediction_files = sorted(prediction_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
-        if pred_file_path is not None:
-            prediction_file_path = pred_file_path
+        if prediction_path is not None:
+            prediction_file_path = prediction_path
             if not os.path.exists(prediction_file_path):
                 print('Invalid prediction file path')
                 prediction_file_path = prediction_files[-1]
+                print('Using the last prediction file: ', prediction_file_path)
+                raw_prediction = np.load(prediction_file_path)
             else:
+                print('Using the provided prediction file: ', prediction_file_path)
                 if prediction_file_path.endswith('.npy'):
                     raw_prediction = np.load(prediction_file_path)
                 elif prediction_file_path.endswith('.las'):
                     raw_prediction = laspy.read(prediction_file_path).intensity
 
+
         else:
-            prediction_file_path = prediction_files[-1]
-            raw_prediction = np.load(prediction_file_path)
-        
-        
-        # get the unique semantics 
-        unique_semantics = np.unique(raw_prediction)
-        # sort the unique semantics
-        unique_semantics = np.sort(unique_semantics)
-        N_unique_semantics = unique_semantics.shape[0]
+            prediction_file_path = prediction_files[-1][:-4] + '_shuffled.las'
+            print('Using the last prediction file: ', prediction_file_path)
+            raw_prediction = laspy.read(prediction_file_path).intensity
 
-        prediction = np.zeros_like(raw_prediction)
-        for i, semantic in enumerate(unique_semantics):
-            if semantic == -1:
-                prediction[raw_prediction == semantic] = N_unique_semantics - 1
-            else:
-                prediction[raw_prediction == semantic] = i-1
+        # get the unique semantics
+        unique_semantics_prediction = np.unique(raw_prediction)
+        unique_semantics_ground_truth = np.unique(ground_truth)
+        print('Number of unique semantics in the prediction: ', unique_semantics_prediction.shape[0])
+        print('Number of unique semantics in the ground truth: ', unique_semantics_ground_truth.shape[0])
+        self.prediction_semantics = raw_prediction
+        self.ground_truth_semantics = ground_truth
 
-        if remove_background_in_prediction:
-            # get the indices of the background points in the prediction 
-            background_indices = np.where(prediction == N_unique_semantics - 1)
-            # remove the background points from the prediction
-            prediction = np.delete(prediction, background_indices, axis=0)
-            # remove the background points from the ground truth
-            ground_truth = np.delete(ground_truth, background_indices, axis=0)
+    def _associate(self, semantics1, semantics2, lower_bound_iou=0.8):
+        # get all unique semantics in semantics1
+        unique_semantics1 = np.unique(semantics1)
 
-        # get the indices of the points that are not in the ground truth
-        indices = np.where(ground_truth == np.max(ground_truth))
-        # remove the points that are not in the ground truth from the prediction
-        prediction = np.delete(prediction, indices, axis=0)
-        # remove the points that are not in the ground truth from the ground truth
-        ground_truth = np.delete(ground_truth, indices, axis=0)
+        # Use joblib to parallelize the loop over unique semantics
+        associations = Parallel(n_jobs=4)(delayed(self._find_best_semantic2)(
+            semantic1, semantics1, semantics2, lower_bound_iou) for semantic1 in unique_semantics1)
 
-        self.prediction = prediction
-        self.ground_truth = ground_truth
+        # Create a dictionary of associations
+        return {semantic1: best_semantic2 for semantic1, best_semantic2 in associations}
 
-    def __association(self):
-        N_labels = np.max(self.ground_truth) + 1
-        ground_truth_associated = np.zeros_like(self.ground_truth)
-
-        for i in range(N_labels):
-            indices = np.where(self.ground_truth == i)
-            if indices[0].shape[0] > 0:
-                prediction_labels = self.prediction[indices]
-                unique, counts = np.unique(prediction_labels, return_counts=True)
-                associated_label = unique[np.argmax(counts)]
-                ground_truth_associated[indices] = associated_label
-
-        return ground_truth_associated
-
-    def evaluate(self):
-        ground_truth_associated = self.__association()
-
-        unique, counts = np.unique(ground_truth_associated, return_counts=True)
-        print('Unique labels in the ground truth: ', unique)
-        print('Counts of unique labels in the ground truth: ', counts)
-        print('Number of unique labels in the ground truth: ', unique.shape[0])
-        # we compare ground_truth_associated with self.prediction to calculate the accuracy, precision, and f1-score
-        TP = np.sum(ground_truth_associated == self.prediction)
-        FP = np.sum(ground_truth_associated != self.prediction)
-
-        accuracy = TP / (TP + FP)
-        precision = TP / (TP + FP)   
-        f1_score = 2 * precision * accuracy / (precision + accuracy)     
-        print('Accuracy: ', accuracy)
-        print('Precision: ', precision)
-        print('F1-score: ', f1_score)
-
-
-    def evaluate2(self, iou_threshold=0.5):
+    def _find_best_semantic2(self, semantic1, semantics1, semantics2, lower_bound_iou):
         """
-        This function calculates the intersection over union (IoU) between the ground truth and the prediction to calculate average precision (AP)
-        """ 
-        ground_truth_associated = self.__association()
-        # get unique labels in the ground truth
-        unique_labels = np.unique(ground_truth_associated)
+        Helper function to find the best matching semantic2 for a given semantic1.
+        This function will be parallelized.
+        """
+        # get indices of all points with semantic1 in semantics1
+        indices1 = np.where(semantics1 == semantic1)[0]
+        # get all semantics in semantics2 at these indices
+        semantics2_at_semantic1 = semantics2[indices1]
+        # get unique semantics in semantics2_at_semantic1
+        unique_semantics2_at_semantic1 = np.unique(semantics2_at_semantic1)
 
-        # calculate the intersection over union (IoU) between the ground truth and the prediction
-        TP = 0
-        FP = 0
-        for label in unique_labels:
-            # get the indices of the label in the ground truth
-            indices = np.where(ground_truth_associated == label)
-            # get the indices of the label in the prediction
-            prediction_indices = np.where(self.prediction == label)
-            # calculate the intersection
-            intersection = np.intersect1d(indices, prediction_indices)
-            # calculate the union
-            union = np.union1d(indices, prediction_indices)
-            # calculate the IoU
-            IoU = intersection.shape[0] / union.shape[0]
-            #print('IoU for label {}: '.format(label), IoU)
-            if IoU >= iou_threshold:
-                TP += 1
-            else:
-                FP += 1
-        
-        # calculate average precision (AP)
-        AP = TP / (TP + FP)
-        print('Average precision (AP): ', AP)
+        best_semantic2 = None
+        for semantic2 in unique_semantics2_at_semantic1:
+            # get indices of all points with semantic2 in semantics2
+            indices2 = np.where(semantics2 == semantic2)[0]
+            iou = self._calculate_iou(indices1, indices2)
+            if iou > lower_bound_iou:
+                lower_bound_iou = iou
+                best_semantic2 = semantic2
+
+        return semantic1, best_semantic2
+
+    def _calculate_iou(self, indices1, indices2):
+        """
+        Calculate Intersection over Union (IoU) between two sets of points
+
+        Args:
+            indices1: indices of points in 1d numpy array
+            indices2: indices of points in 1d numpy array
+        """
+        # get intersection
+        intersection = np.intersect1d(indices1, indices2)
+        # get union
+        union = np.union1d(indices1, indices2)
+        # calculate IoU
+        iou = len(intersection) / len(union)
+        return iou
+
+    def validate(self, iou_list):
+        results = {}
+        AP_list = []
+        AR_list = []
+        TP_list = []
+        FP_list = []
+        FN_list = []
+
+        for lower_bound_iou in iou_list:
+            association1 = self._associate(self.prediction_semantics, self.ground_truth_semantics, lower_bound_iou)
+
+            associated_gt = np.array([association1[semantic] for semantic in self.prediction_semantics if association1[semantic] is not None])
+            associated_gt = np.unique(associated_gt)
+            unassociated_gt = np.setdiff1d(np.unique(self.ground_truth_semantics), associated_gt)
+            
+            TP = len(associated_gt)
+            FP = len([x for x in association1.values() if x is None])
+            FN = len(unassociated_gt)
+
+            print('TP: ', TP, ' FP: ', FP, ' FN: ', FN)
+            
+            AP = TP / (TP + FP)
+            AR = TP / (TP + FN)
+            
+            AP_list.append(AP)
+            AR_list.append(AR)
+            TP_list.append(TP)
+            FP_list.append(FP)
+            FN_list.append(FN)
+
+        results['AP'] = AP_list
+        results['AR'] = AR_list
+        results['TP'] = TP_list
+        results['FP'] = FP_list
+        results['FN'] = FN_list
+
+        return results
 
     
 if __name__ == '__main__':
-    validation = ScannetValidation()
-    """
-    # without nearest interpolation
-    validation.read_scene('../../data/scene0000_00', remove_background_in_prediction=False)
-    validation.evaluate()
-    # with nearest interpolation
-    validation.read_scene('../../data/scene0000_00', '../../data/scene0000_00/associations/semantics/semantics_613_shuffled.las', remove_background_in_prediction=False)
-    validation.evaluate()
-    """
-    # with nearest interpolation and filter
-    validation.read_scene('../../data/scene0000_00', '../../data/scene0000_00/associations/semantics/semantic_613_interpolated_shuffled_filtered.las', remove_background_in_prediction=False)
-    validation.evaluate()
-    validation.evaluate2()
+    scene_folder_path = '../../data/scene0000_00'
+    validator = ScannetValidation(scene_folder_path)
+    results = validator.validate(np.arange(0.5, 1.0, 0.05))
+    #results = validator.validate([0.5, 0.6])
+    mAP = results['AP']
+    mAR = results['AR']
+    print('mAP list: ', mAP, ' mAR list: ', mAR)
+    mAP = np.sum(mAP) / len(mAP)
+    mAR = np.sum(mAR) / len(mAR)
+    print('mAP: ', mAP, ' mAR: ', mAR)
+    

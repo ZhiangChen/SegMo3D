@@ -47,14 +47,14 @@ def kubric_validation(data_id, area_lower_threshold, depth_filtering_threshold, 
         pointcloud_projector.parallel_batch_project_joblib(image_list, associations_folder_path, num_workers=16, save_depth=False)
 
         print('Building keyimage associations:')
-        smc_solver = KeyimageAssociationsBuilder(associations_folder_path, segmentations_folder_path)
+        smc_solver = KeyimageAssociationsBuilder(image_list, associations_folder_path, segmentations_folder_path)
         smc_solver.build_associations()
 
         keyimage_associations_file_name = 'associations_keyimage.npy'
         keyimage_yaml_name= 'keyimages.yaml'
 
         print('Running object registration:')
-        obr = ObjectRegistration(pointcloud_path, segmentations_folder_path, associations_folder_path, keyimage_associations_file_name=keyimage_associations_file_name, loginfo=False)
+        obr = ObjectRegistration(pointcloud_path, segmentations_folder_path, associations_folder_path, keyimage_associations_file_name=keyimage_associations_file_name,image_list=image_list, loginfo=False)
 
         # Run object registration
         obr.object_registration(iou_threshold=0.50, save_semantics=True)
@@ -117,39 +117,7 @@ def kubric_parameter_search(data_id, gt_mask=True):
     main_logger.info('Started')
 
     results = []
-    """
-    for area_lower_threshold in range(50, 210, 10):
-        depth_filtering_threshold = 1.8
-        nearest_interpolation = 350
-        results = kubric_validation(data_id, area_lower_threshold, depth_filtering_threshold, nearest_interpolation, gt_mask=gt_mask)
-        mAP = results['AP']
-        mAR = results['AR']
-        print('area_lower_threshold: ', area_lower_threshold, ' depth_filtering_threshold: ', depth_filtering_threshold, ' nearest_interpolation: ', nearest_interpolation)
-        print('mAP list: ', mAP, ' mAR list: ', mAR)
-        mAP = np.sum(mAP) / len(mAP)
-        mAR = np.sum(mAR) / len(mAR)
-        print('mAP: ', mAP, ' mAR: ', mAR)
-        result = {'area_lower_threshold': area_lower_threshold, 'depth_filtering_threshold': depth_filtering_threshold, 'nearest_interpolation': nearest_interpolation, 'mAP': mAP, 'mAR': mAR}
-        print('------------------------------------')
-        # log result in main function's logger
-        main_logger.info(result)
 
-    for depth_filtering_threshold in np.arange(1.2, 2.6, 0.1):
-        area_lower_threshold = 80
-        nearest_interpolation = 350
-        results = kubric_validation(data_id, area_lower_threshold, depth_filtering_threshold, nearest_interpolation, gt_mask=gt_mask)
-        mAP = results['AP']
-        mAR = results['AR']
-        print('area_lower_threshold: ', area_lower_threshold, ' depth_filtering_threshold: ', depth_filtering_threshold, ' nearest_interpolation: ', nearest_interpolation)
-        print('mAP list: ', mAP, ' mAR list: ', mAR)
-        mAP = np.sum(mAP) / len(mAP)
-        mAR = np.sum(mAR) / len(mAR)
-        print('mAP: ', mAP, ' mAR: ', mAR)
-        result = {'area_lower_threshold': area_lower_threshold, 'depth_filtering_threshold': depth_filtering_threshold, 'nearest_interpolation': nearest_interpolation, 'mAP': mAP, 'mAR': mAR}
-        print('------------------------------------')
-        # log result in main function's logger
-        main_logger.info(result)
-    """
     area_lower_threshold = 80
     depth_filtering_threshold = 1.8
     nearest_interpolation = 100
@@ -177,11 +145,17 @@ def kubric_batch_validation(data_ids, area_lower_threshold, depth_filtering_thre
     TP = []
     FP = []
     FN = []
+    if gt_mask:
+        file_name = 'kubric_batch_validation_gt.csv'
+    else:
+        file_name = 'kubric_batch_validation.csv'
 
     # save results in CSV file
-    with open('kubric_batch_validation.csv', mode='w') as file:
-        writer = csv.writer(file)
-        writer.writerow(['data_id', 'TP@50' , 'TP@55', 'TP@60', 'TP@65', 'TP@70', 'TP@75', 'TP@80', 'TP@85', 'TP@90', 'TP@95', 'FP@50', 'FP@55', 'FP@60', 'FP@65', 'FP@70', 'FP@75', 'FP@80', 'FP@85', 'FP@90', 'FP@95', 'FN@50', 'FN@55', 'FN@60', 'FN@65', 'FN@70', 'FN@75', 'FN@80', 'FN@85', 'FN@90', 'FN@95'])
+    # check if the csv file exists
+    if not os.path.exists(file_name):
+        with open('kubric_batch_validation.csv', mode='w') as file:
+            writer = csv.writer(file)
+            writer.writerow(['data_id', 'TP@50' , 'TP@55', 'TP@60', 'TP@65', 'TP@70', 'TP@75', 'TP@80', 'TP@85', 'TP@90', 'TP@95', 'FP@50', 'FP@55', 'FP@60', 'FP@65', 'FP@70', 'FP@75', 'FP@80', 'FP@85', 'FP@90', 'FP@95', 'FN@50', 'FN@55', 'FN@60', 'FN@65', 'FN@70', 'FN@75', 'FN@80', 'FN@85', 'FN@90', 'FN@95'])
 
     for data_id in data_ids:
         results = kubric_validation(data_id, area_lower_threshold, depth_filtering_threshold, nearest_interpolation, only_validation, gt_mask)
@@ -189,7 +163,7 @@ def kubric_batch_validation(data_ids, area_lower_threshold, depth_filtering_thre
         FP.append(results['FP'])
         FN.append(results['FN'])
         # save results in CSV file
-        with open('kubric_batch_validation.csv', mode='a') as file:
+        with open(file_name, mode='a') as file:
             writer = csv.writer(file)
             writer.writerow([data_id] + results['TP'] + results['FP'] + results['FN'])
 
@@ -214,14 +188,19 @@ def kubric_batch_validation(data_ids, area_lower_threshold, depth_filtering_thre
     print('AP: ', AP, ' AR: ', AR)
     print('mAP: ', mAP, ' mAR: ', mAR)
 
-def compute_metrics():
+def compute_metrics(gt_mask=True):
+    if gt_mask:
+        file_name = 'kubric_batch_validation_gt.csv'
+    else:
+        file_name = 'kubric_batch_validation.csv'
+
     # check if the csv file exists
-    if not os.path.exists('kubric_batch_validation.csv'):
+    if not os.path.exists(file_name):
         print('The file does not exist')
         return
 
     # read the csv file
-    with open('kubric_batch_validation.csv', mode='r') as file:
+    with open(file_name, mode='r') as file:
         reader = csv.reader(file)
         data = list(reader)
 
@@ -323,11 +302,15 @@ def compute_metrics():
 
 
 if __name__ == "__main__":
+    # add a timer to sleep one hour
+    # import time
+    # time.sleep(4200)
     
-    """data_ids = list(range(16))
-    area_lower_threshold = 80
+    gt_mask = True
+    data_ids = list(range(0, 128))
+    """area_lower_threshold = 80
     depth_filtering_threshold = 1.8
-    nearest_interpolation = 450
-    kubric_batch_validation(data_ids, area_lower_threshold, depth_filtering_threshold, nearest_interpolation, gt_mask=False)"""
-    compute_metrics()
+    nearest_interpolation = 450  # 450 for sam2, 350 for gt
+    kubric_batch_validation(data_ids, area_lower_threshold, depth_filtering_threshold, nearest_interpolation, gt_mask=gt_mask)"""
+    compute_metrics(gt_mask=gt_mask)
     #kubric_parameter_search(1, gt_mask=False)

@@ -24,11 +24,12 @@ def sam2_segmentation(data_id, device):
     image_segmentor.batch_predict(image_paths, segmentations_folder_path, save_overlap=True)
 
 if __name__ == '__main__':
-    start = 39
-    end = 42
-    devices = [0, 2]
+    sam2_segmentation(127, 1)
+    """start = 111
+    end = 127
+    devices = [0, 2, 3, 4, 6, 7]
 
-    data_set = 1
+    data_set = 5
     device = devices[data_set]
     spacing = (end - start) / len(devices)
     start_id = int(data_set * spacing + start)
@@ -37,4 +38,4 @@ if __name__ == '__main__':
     else:
         end_id = int((data_set + 1) * spacing + start)
     for i in range(start_id, end_id):
-        sam2_segmentation(i, device)
+        sam2_segmentation(i, device)"""

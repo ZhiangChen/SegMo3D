@@ -3,9 +3,35 @@ import os
 import yaml
 from tqdm import tqdm
 from joblib import Parallel, delayed
+import networkx as nx
+from scipy.sparse import csr_matrix
+import time
+from numba import jit
+import torch
+import json
+from ssfm.files import *
+
+@jit(nopython=True)
+def calculate_edges(points, associations_keyimage_slice, i):
+    edges = []
+    links = np.zeros(i)  # Preallocate links array
+    
+    # Calculate links without broadcasting
+    for j in range(i):
+        link_sum = 0
+        for k in range(points.shape[0]):  # Iterate over rows
+            link_sum += points[k] * associations_keyimage_slice[k, j]
+        links[j] = link_sum
+
+    # Add edges based on link weights
+    for j in range(i):
+        if links[j] > 0:
+            edges.append((i, j, links[j]))
+    
+    return edges
 
 class KeyimageAssociationsBuilder(object):
-    def __init__(self, read_folder_path, segmentation_folder_path):
+    def __init__(self, image_list, read_folder_path, segmentation_folder_path):
         """
         Arguments:
             read_folder_path (str): The path to the folder containing the point2pixel files and pixel2point files.
@@ -14,26 +40,26 @@ class KeyimageAssociationsBuilder(object):
         self.read_folder_path = read_folder_path
         self.segmentation_folder_path = segmentation_folder_path
 
+        # get keyimage_list where each element comes from image_list with '.jpg' or '.png' replaced by '.npy'
+        keyimage_list = [f.replace('.jpg', '.npy').replace('.png', '.npy').replace('.JPG', '.npy') for f in image_list]
+        self.keyimage_list = keyimage_list
+
+
         pixel2point_folder_path = os.path.join(read_folder_path, 'pixel2point')
         assert os.path.exists(pixel2point_folder_path), 'Pixel2point folder path does not exist.'
-        self.pixel2point_file_paths = [os.path.join(pixel2point_folder_path, f) for f in os.listdir(pixel2point_folder_path) if f.endswith('.npy')]
-        # sort the pixel2point_file_paths based on the numbers in the file names using the lambda function
-        self.pixel2point_file_paths = sorted(self.pixel2point_file_paths, key=lambda x: int(os.path.basename(x)[:-4]))
+        self.pixel2point_file_paths = [os.path.join(pixel2point_folder_path, f) for f in keyimage_list if f in os.listdir(pixel2point_folder_path)]
         self.N_images = len(self.pixel2point_file_paths)
         
         # get the number of points
         point2pixel_folder_path = os.path.join(read_folder_path, 'point2pixel')  
         assert os.path.exists(point2pixel_folder_path), 'Point2pixel folder path does not exist.'  
-        self.point2pixel_file_paths = [os.path.join(point2pixel_folder_path, f) for f in os.listdir(point2pixel_folder_path) if f.endswith('.npy')]  
-        # sort the point2pixel_file_paths based on the numbers in the file names using the lambda function
-        self.point2pixel_file_paths = sorted(self.point2pixel_file_paths, key=lambda x: int(os.path.basename(x)[:-4]))
+        self.point2pixel_file_paths = [os.path.join(point2pixel_folder_path, f) for f in keyimage_list if f in os.listdir(point2pixel_folder_path)]
         point2pixel = np.load(self.point2pixel_file_paths[0])
         self.N_points = point2pixel.shape[0]
 
         assert os.path.exists(segmentation_folder_path), 'Segmentation folder path does not exist.'
-        self.segmentation_file_paths = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if (f.endswith('.npy') and f in os.listdir(pixel2point_folder_path))]
-        # sort the segmentation_file_paths based on the numbers in the file names
-        self.segmentation_file_paths = sorted(self.segmentation_file_paths, key=lambda x: int(os.path.basename(x)[:-4]))
+        self.segmentation_file_paths = [os.path.join(segmentation_folder_path, f) for f in keyimage_list if f in os.listdir(segmentation_folder_path)]
+
 
         # check if the number of images is the same
         assert len(self.segmentation_file_paths) == self.N_images, 'The number of images is not the same as the number of segmentation files.'
@@ -65,6 +91,134 @@ class KeyimageAssociationsBuilder(object):
         save_file_path = os.path.join(self.read_folder_path, 'keyimages.yaml')
         with open(save_file_path, 'w') as f:
             yaml.dump(image_file_names, f)
+
+
+    def build_graph(self, num_chunks=0):
+        """
+        Build a graph from the associations_keyimage matrix
+
+        Arguments:
+            num_chunks (int): The number of chunks to split the associations_keyimage matrix into for parallel processing. 
+            If 0, the CPU-based method will be used. Default is 0. Otherwise, the GPU-based method will be used. 
+        """
+        # Initialize the graph
+        self.graph = nx.Graph()
+        
+        t2 = time.time()
+        edges = []
+
+        if num_chunks == 0:
+            # CPU-based method
+            for i in range(self.N_images):
+                # Extract relevant points for image i
+                points = self.associations_keyimage[:, i]
+                extracted_points = self.associations_keyimage[points, :i]
+                # Compute link weights
+                links = np.sum(extracted_points, axis=0)
+                
+                # Add edges if the link weight is greater than 0
+                edges.extend([(i, j, links[j]) for j in range(i) if links[j] > 0])
+
+            t3 = time.time()
+            print(f"Building edges on CPU took {t3 - t2} seconds.")
+
+        else:
+            # GPU-based method with chunking
+            chunk_size = int(self.N_points / num_chunks)
+
+            for chunk in range(num_chunks):
+                # Calculate the start and end indices for this chunk
+                start_idx = chunk * chunk_size
+                end_idx = (chunk + 1) * chunk_size if chunk < num_chunks - 1 else self.N_points
+
+                # Move current chunk of associations_keyimage to GPU
+                associations_keyimage_chunk = torch.tensor(self.associations_keyimage[start_idx:end_idx, :]).cuda()
+
+                # Process each image in the current chunk
+                for i in range(self.N_images):
+                    points = associations_keyimage_chunk[:, i]
+                    extracted_points = associations_keyimage_chunk[points.bool(), :i]
+                    links = torch.sum(extracted_points, dim=0).cpu().numpy()  # Move result back to CPU as NumPy array
+
+                    # Add edges if the link weight is greater than 0
+                    edges.extend([(i, j, links[j]) for j in range(i) if links[j] > 0])
+
+            t3 = time.time()
+            print(f"Building edges on GPU with {num_chunks} chunks took {t3 - t2} seconds.")
+
+        # Combine weights for duplicate edges
+        edges_dict = {}
+        for edge in edges:
+            key = (edge[0], edge[1])
+            if key in edges_dict:
+                edges_dict[key] += edge[2]
+            else:
+                edges_dict[key] = edge[2]
+
+        # Add all edges to the graph at once
+        self.graph.add_weighted_edges_from([(key[0], key[1], edges_dict[key]) for key in edges_dict])
+
+        # Save the graph as a GraphML file
+        save_file_path = os.path.join(self.read_folder_path, 'graph.graphml')
+        nx.write_graphml(self.graph, save_file_path)
+
+    def add_camera_to_graph(self, camera_file_path_list, camera_type="Agisoft"):
+        """
+        Add camera nodes to the graph
+
+        Arguments:
+            camera_file_path_list (list): A list of camera file paths.
+            camera_type (str): The type of camera. Default is "Agisoft".
+        """
+        graph_file_path = os.path.join(self.read_folder_path, 'graph.graphml')
+        assert os.path.exists(graph_file_path), 'Graph file does not exist.'
+        self.graph = nx.read_graphml(graph_file_path)
+
+        if camera_type == "Agisoft":
+            assert len(camera_file_path_list) == 1, 'Only one camera file is required for Agisoft.'
+            camera_file_path = camera_file_path_list[0]
+            cameras =  read_camera_parameters_agisoft(camera_file_path)
+
+        elif camera_type == "WebODM":
+            assert len(camera_file_path_list) == 2, 'Two camera files are required for WebODM.'
+            cameras = read_camera_parameters_webodm(camera_file_path_list[0], camera_file_path_list[1])
+
+        elif camera_type == "Kubric":
+            assert len(camera_file_path_list) == 1, 'Only one camera file is required for Kubric.'
+            camera_file_path = camera_file_path_list[0]
+            cameras = read_camera_parameters_kubric(camera_file_path)
+
+        elif camera_type == "Scannet":
+            assert len(camera_file_path_list) == 1, 'Only one camera file is required for Scannet.'
+            camera_file_path = camera_file_path_list[0]
+            cameras = read_camera_scannet(camera_file_path)
+
+        else:
+            raise ValueError("Camera type is not supported.")
+
+        
+        # find extension of the camera file
+        for camera in cameras:
+            if '.' in camera:
+                extension = camera.split('.')[-1]
+                break
+            
+        # Add camera positions to the graph nodes
+        for i, keyframe in enumerate(self.keyimage_list):
+            keyimage = keyframe.split('.')[0] + '.' + extension
+            camera_transform = cameras[keyimage]
+            camera_position = camera_transform[:3, 3].tolist()
+            camera_position_str = json.dumps(camera_position)
+            # set node position to the camera position
+            self.graph.nodes[str(i)]['pos'] = camera_position_str
+        
+        # Save the graph as a GraphML file
+        save_file_path = os.path.join(self.read_folder_path, 'graph_with_cameras.graphml')
+        print(save_file_path)
+        nx.write_graphml(self.graph, save_file_path)
+
+
+        
         
     def read_associations(self, associations_keyimage_file_path=None):
         """
@@ -117,6 +271,9 @@ class KeyimageAssociationsBuilder(object):
 
 
     def refine(self, remove_ratio=0.3):
+        """
+        Refine the associations_keyimage by removing the data with the smallest importance
+        """
         N_image_per_point = np.sum(self.associations_keyimage, axis=1)
         _, N = self.associations_keyimage.shape
 
@@ -147,9 +304,16 @@ class KeyimageAssociationsBuilder(object):
 
 
 if __name__ == '__main__':
-    smc_solver = KeyimageAssociationsBuilder('../../data/box_canyon_park/associations', '../../data/box_canyon_park/segmentations')
-    #smc_solver.build_associations(image_patch_path='../../data/box_canyon_park/DJI_photos_split/image_patches.yaml')
-    smc_solver.read_associations('../../data/box_canyon_park/associations/associations_keyimage.npy')
+    scene_dir = '../../data/courtright'
+    photo_folder_path = os.path.join(scene_dir, 'DJI_photos')
+    image_list = [f for f in os.listdir(photo_folder_path) if f.endswith('.JPG')]
+    # sort image list based on the values in the image file names
+    image_list = sorted(image_list, key=lambda x: int(x.split('_')[1].split('.')[0]))
+    smc_solver = KeyimageAssociationsBuilder(image_list, '../../data/courtright/associations', '../../data/courtright/segmentations')
+    smc_solver.build_associations()
+    #smc_solver.read_associations('../../data/courtright/associations/associations_keyimage.npy')
     #smc_solver.find_min_cover()
-    smc_solver.refine(0.5)
+    #smc_solver.refine(0.5)
+    smc_solver.build_graph(num_chunks=10)
+    smc_solver.add_camera_to_graph([os.path.join(scene_dir, 'SfM_products', 'agisoft_cameras.xml')], camera_type="Agisoft")
     

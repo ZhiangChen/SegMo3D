@@ -10,6 +10,7 @@ import logging
 import yaml
 from collections import Counter
 from tqdm import tqdm
+import networkx as nx
 
 def group_lists(lists):
     """
@@ -139,7 +140,7 @@ def numba_update_pc_segmentation(associations1_point2pixel, segmented_objects_im
 
 
 class ObjectRegistration(object):
-    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, keyimage_yaml_name=None, loginfo=True):
+    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, image_list=None, loginfo=True, using_graph=False):
         self.pointcloud_path = pointcloud_path
         self.segmentation_folder_path = segmentation_folder_path
         self.association_folder_path = association_folder_path
@@ -178,13 +179,13 @@ class ObjectRegistration(object):
 
 
         # Load pixel2point association files (.npy) and sort them
-        if keyimage_yaml_name is None:
+        if image_list is None:
             # check if the folder exists
             self.associations_pixel2point_path = os.path.join(self.association_folder_path, 'pixel2point')
             assert os.path.exists(self.associations_pixel2point_path), 'Association pixel2point folder path does not exist.'
             self.associations_pixel2point_file_paths = [os.path.join(self.associations_pixel2point_path, f) for f in os.listdir(self.associations_pixel2point_path) if f.endswith('.npy')]
             # sort the association files based on the number in the file name
-            self.associations_pixel2point_file_paths = sorted(self.associations_pixel2point_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0]))
+            self.associations_pixel2point_file_paths = sorted(self.associations_pixel2point_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0].split('_')[-1]))
 
             # Load point2pixel association files (.npy) and sort them
             # check if the folder exists
@@ -192,21 +193,18 @@ class ObjectRegistration(object):
             assert os.path.exists(self.associations_point2pixel_path), 'Association point2pixel folder path does not exist.'
             self.associations_point2pixel_file_paths = [os.path.join(self.associations_point2pixel_path, f) for f in os.listdir(self.associations_point2pixel_path) if f.endswith('.npy')]
             # sort the association files based on the number in the file name
-            self.associations_point2pixel_file_paths = sorted(self.associations_point2pixel_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0]))
+            self.associations_point2pixel_file_paths = sorted(self.associations_point2pixel_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0].split('_')[-1]))
 
             # Load segmentation files (.npy) and sort them
             # check if the folder exists
             assert os.path.exists(self.segmentation_folder_path), 'Segmentation folder path does not exist.'
             self.segmentation_file_paths = [os.path.join(self.segmentation_folder_path, f) for f in os.listdir(self.segmentation_folder_path) if f.endswith('.npy')]
             # sort the segmentation files based on the number in the file name
-            self.segmentation_file_paths = sorted(self.segmentation_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0]))
+            self.segmentation_file_paths = sorted(self.segmentation_file_paths, key=lambda x: int(os.path.basename(x).split('.')[0].split('_')[-1]))
 
-        else:
-            keyimage_yaml_path = os.path.join(self.association_folder_path, keyimage_yaml_name)
-            assert os.path.exists(keyimage_yaml_path), 'Keyimage yaml path does not exist.'
-            with open(keyimage_yaml_path, 'r') as file:
-                keyimage_list = yaml.load(file, Loader=yaml.FullLoader)
-            
+        else: 
+            keyimage_list = [f.replace('.jpg', '.npy').replace('.png', '.npy').replace('.JPG', '.npy') for f in image_list]
+                       
             self.associations_pixel2point_path = os.path.join(self.association_folder_path, 'pixel2point')
             assert os.path.exists(self.associations_pixel2point_path), 'Association pixel2point folder path does not exist.'
             associations_pixel2point_files = [f for f in os.listdir(self.associations_pixel2point_path) if f.endswith('.npy')]
@@ -236,6 +234,33 @@ class ObjectRegistration(object):
             assert segmentation_file_name == associations_point2pixel_file_name, 'The segmentation file name and association point2pixel file name are not the same.'
             self.segmentation_association_pairs.append((self.segmentation_file_paths[i], self.associations_pixel2point_file_paths[i], 
                                                         self.associations_point2pixel_file_paths[i]))
+
+        # load graph 
+        self.using_graph = using_graph
+        if using_graph:
+            graph_file_path = os.path.join(self.association_folder_path, 'graph.graphml')
+            assert os.path.exists(graph_file_path), 'Graph file path does not exist.'
+            self.graph = nx.read_graphml(graph_file_path)
+            # convert edges to dictionary
+            self.edges = dict()
+            for edge in self.graph.edges:
+                i = int(edge[0])
+                j = int(edge[1])
+                if i not in self.edges.keys():
+                    self.edges[i] = [j]
+                else:
+                    self.edges[i].append(j)
+                if j not in self.edges.keys():
+                    self.edges[j] = [i]
+                else:
+                    self.edges[j].append(i)
+
+            # check if key is in value list and sort the values
+            for key, values in self.edges.items():
+                if key in values:
+                    raise ValueError('key is in values.')
+                
+                self.edges[key] = sorted(values)
 
         # log the number of segmentation-association pairs
         if self.loginfo:
@@ -557,16 +582,38 @@ class ObjectRegistration(object):
                 if image_id == 0:
                     keyimages = []
                 else:
-                    keyimages = self.keyimage_associations[point_object1_image1_bool, :image_id]
-                    keyimages = np.sum(keyimages, axis=0) 
-                    descending_indices = np.argsort(keyimages)[::-1]
-                    nonzero_indices = np.argwhere(keyimages > 0).reshape(-1)
-                    if len(nonzero_indices) > self.M_keyimages:
-                        descending_indices = descending_indices[:self.M_keyimages]
+                    if self.using_graph:
+                        keyimage_ids = self.edges[image_id]
+                        # remove the keyimage ids that have not been registered, image id smaller than image_id
+                        keyimage_ids = [keyimage_id for keyimage_id in keyimage_ids if keyimage_id < image_id]
+                        if len(keyimage_ids) == 0:
+                            keyimages = []
+                        else:
+                            keyimages = self.keyimage_associations[point_object1_image1_bool, :image_id]
+                            keyimages = keyimages[:, keyimage_ids]
+
+                            keyimages = np.sum(keyimages, axis=0) 
+                            descending_indices = np.argsort(keyimages)[::-1]
+                            nonzero_indices = np.argwhere(keyimages > 0).reshape(-1)
+
+                            if len(nonzero_indices) > self.M_keyimages:
+                                descending_indices = descending_indices[:self.M_keyimages]
+                            else:
+                                descending_indices = nonzero_indices
+
+                            keyimages = [keyimage_ids[i] for i in descending_indices]                      
+                            
                     else:
-                        descending_indices = nonzero_indices
-                    
-                    keyimages = descending_indices.tolist()
+                        keyimages = self.keyimage_associations[point_object1_image1_bool, :image_id]
+                        keyimages = np.sum(keyimages, axis=0) 
+                        descending_indices = np.argsort(keyimages)[::-1]
+                        nonzero_indices = np.argwhere(keyimages > 0).reshape(-1)
+                        if len(nonzero_indices) > self.M_keyimages:
+                            descending_indices = descending_indices[:self.M_keyimages]
+                        else:
+                            descending_indices = nonzero_indices
+                        
+                        keyimages = descending_indices.tolist()
 
                 # process keyimages
                 if len(keyimages) == 0:
