@@ -144,10 +144,11 @@ class PointcloudProjection(DepthImageRendering):
     1. Read the point cloud and camera parameters: PointcloudProjection.read_pointcloud and PointcloudProjection.read_camera_parameters
     2. Project the point cloud onto the image: PointcloudProjection.project
     """
-    def __init__(self, depth_filtering_threshold=0) -> None:
+    def __init__(self, depth_filtering_threshold=0, effective_depth=np.inf) -> None:
         super().__init__()
         self.sfm_software = None
         self.tri_mesh = None
+        self.effective_depth = effective_depth
         self.depth_filtering_threshold= depth_filtering_threshold
 
     def read_pointcloud(self, pointcloud_path):
@@ -239,7 +240,6 @@ class PointcloudProjection(DepthImageRendering):
         """
         Arguments:
             frame_key (str): The original image names to be projected onto. E.g., 'DJI_0313.JPG'.
-            depth_filtering_threshold (float): The threshold for depth filtering. depth_point (> depth_mesh + depth_filtering_threshold) will be filtered out.
         """
         assert self.tri_mesh is not None, 'Please read the mesh first.'
         assert self.sfm_software is not None, 'Please read the camera parameters first.'
@@ -267,7 +267,7 @@ class PointcloudProjection(DepthImageRendering):
         # Initialize image (2D array) and z-buffer
         image = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
 
-        if self.depth_filtering_threshold == 0:
+        if self.depth_filtering_threshold == None:
             z_buffer = np.full((self.image_height, self.image_width), np.inf)
         else:
             if self.tri_mesh == "depth_images":
@@ -281,6 +281,9 @@ class PointcloudProjection(DepthImageRendering):
                 depth_mesh = self.render_depth_image(frame_key)
         
             z_buffer = depth_mesh + self.depth_filtering_threshold
+
+        # cut off z_buffer with self.effective_depth
+        z_buffer[z_buffer > self.effective_depth] = self.effective_depth
             
         image, z_buffer, pixel2point, point2pixel = update_image_and_associations(image, z_buffer, points_projected, self.colors, self.image_height, self.image_width)
 
@@ -357,7 +360,7 @@ class PointcloudProjection(DepthImageRendering):
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    site = 'kubric'  # 'box_canyon', 'courtright', 'scannet', 'kubric'
+    site = 'box_canyon'  # 'box_canyon', 'courtright', 'scannet', 'kubric'
 
     single_projection_flag = True  # True: project semantics from one image to the point cloud.
 
@@ -370,13 +373,13 @@ if __name__ == "__main__":
             #image_segmentor.save_npy(masks, '../../data/DJI_0246.npy')
 
             # project the point cloud
-            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.2)
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.01)
             pointcloud_projector.read_camera_parameters('../../data/box_canyon_park/SfM_products/agisoft_cameras.xml')
             pointcloud_projector.read_mesh('../../data/box_canyon_park/SfM_products/model.obj')
             pointcloud_projector.read_pointcloud('../../data/box_canyon_park/SfM_products/agisoft_model.las')
             
-            pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0313.npy')
-            image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0313.JPG')
+            pointcloud_projector.read_segmentation('../../data/box_canyon_park/segmentations/DJI_0183.npy')
+            image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0183.JPG')
 
             # add color to points
             t1 = time.time()
@@ -386,7 +389,7 @@ if __name__ == "__main__":
             t2 = time.time()
             print('Time for adding colors: ', t2 - t1)
 
-            write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/313_depth_filter_segmentation.las")
+            write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/depth_filter_segmentation.las")
 
         elif site == 'courtright':
             # project the point cloud
@@ -442,7 +445,7 @@ if __name__ == "__main__":
         elif site == 'kubric':
             # project the point cloud
             t0 = time.time()
-            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.1)
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=-0.1)
             pointcloud_projector.read_kubric_camera_parameters('../../data/kubric_0')
             pointcloud_projector.read_pointcloud('../../data/kubric_0/reconstructions/combined_point_cloud.las')
             pointcloud_projector.read_segmentation('../../data/kubric_0/segmentations_gt/5.npy')

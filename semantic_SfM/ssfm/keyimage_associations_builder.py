@@ -210,7 +210,10 @@ class KeyimageAssociationsBuilder(object):
             camera_position = camera_transform[:3, 3].tolist()
             camera_position_str = json.dumps(camera_position)
             # set node position to the camera position
-            self.graph.nodes[str(i)]['pos'] = camera_position_str
+            if str(i) in self.graph.nodes:
+                self.graph.nodes[str(i)]['pos'] = camera_position_str
+            else:
+                self.graph.add_node(str(i), pos=camera_position_str)
         
         # Save the graph as a GraphML file
         save_file_path = os.path.join(self.read_folder_path, 'graph_with_cameras.graphml')

@@ -170,6 +170,10 @@ class ImageSegmentation(object):
         assert os.path.exists(image_path), 'Image path does not exist.'
         image = cv2.imread(image_path)
 
+        if self.distortion_params is not None:
+            # undistort the image
+            image = cv2.undistort(image, self.matrix_intrinsics, self.distortion_params)
+
         self.image_size = image.shape
 
         if image.shape[0] > maximum_size or image.shape[1] > maximum_size:
@@ -180,10 +184,6 @@ class ImageSegmentation(object):
         else:
             pass
 
-        if self.distortion_params is not None:
-            # undistort the image
-            image = cv2.undistort(image, self.matrix_intrinsics, self.distortion_params)
-        
         if self.configs['model_name'] == 'sam':
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             masks = self.mask_generator.generate(image)
@@ -199,7 +199,7 @@ class ImageSegmentation(object):
         self.image = image.copy()
         return masks
     
-    def batch_predict(self, image_paths, save_folder_path, maximum_size=1000, save_overlap=False):
+    def batch_predict(self, image_paths, save_folder_path, maximum_size=1000, save_overlap=False, skip_existing=True):
         """
         Arguments:
             image_paths (list): A list of image paths.
@@ -217,8 +217,7 @@ class ImageSegmentation(object):
         for i, image_path in enumerate(image_paths):
             #print('Processing image {}/{}.'.format(i+1, total))
             save_path = os.path.join(save_folder_path, os.path.basename(image_path).split('.')[0] + '.npy')
-            # skip if the file already exists
-            if os.path.exists(save_path):
+            if skip_existing and os.path.exists(save_path):
                 continue
             masks = self.predict(image_path, maximum_size)
             result = self.save_npy(masks, save_path)

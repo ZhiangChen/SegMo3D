@@ -140,7 +140,7 @@ def numba_update_pc_segmentation(associations1_point2pixel, segmented_objects_im
 
 
 class ObjectRegistration(object):
-    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, image_list=None, loginfo=True, using_graph=False):
+    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, image_list=None, loginfo=True, using_graph=False, radius=2, decaying=1):
         self.pointcloud_path = pointcloud_path
         self.segmentation_folder_path = segmentation_folder_path
         self.association_folder_path = association_folder_path
@@ -273,8 +273,8 @@ class ObjectRegistration(object):
         self.segmented_objects_images = []
 
         # pre-compute gaussian weights
-        self.radius = 2
-        self.decaying = 1
+        self.radius = radius
+        self.decaying = decaying
         self.likelihoods = compute_gaussian_likelihood(radius=self.radius, decaying=self.decaying)
 
         self.registered_object_manager = dict()  # the key is the image id and object id; the value is the registered object id
@@ -583,9 +583,12 @@ class ObjectRegistration(object):
                     keyimages = []
                 else:
                     if self.using_graph:
-                        keyimage_ids = self.edges[image_id]
-                        # remove the keyimage ids that have not been registered, image id smaller than image_id
-                        keyimage_ids = [keyimage_id for keyimage_id in keyimage_ids if keyimage_id < image_id]
+                        if image_id not in self.edges.keys():
+                            keyimage_ids = []
+                        else:
+                            keyimage_ids = self.edges[image_id]
+                            # remove the keyimage ids that have not been registered, image id smaller than image_id
+                            keyimage_ids = [keyimage_id for keyimage_id in keyimage_ids if keyimage_id < image_id]
                         if len(keyimage_ids) == 0:
                             keyimages = []
                         else:

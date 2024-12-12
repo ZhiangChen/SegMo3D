@@ -83,6 +83,7 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
     # construct a .las file
     hdr = laspy.LasHeader(version="1.2", point_format=3)
     hdr.scale = [0.0001, 0.0001, 0.0001]  # Example scale factor, adjust as needed
+    hdr.offset = np.mean(points, axis=0)
 
     # Create a LasData object
     las = laspy.LasData(hdr)
@@ -99,6 +100,8 @@ def add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, 
 
     # Add semantics
     if nearest_interpolation == 0:
+        # make the semantics start from 0. For all semantics < 0, set them to the maximum semantics + 1
+        semantics[semantics < 0] = semantics.max() + 1
         las.intensity = semantics
     elif nearest_interpolation > 0:
         # labeled points are the points with semantics >=0; unlabeled points are the points with semantics < 0
@@ -155,6 +158,7 @@ class PostProcessing(object):
         # get the semantics
         self.semantics = pc.intensity
 
+
         # get the unique semantics and their counts
         self.unique_semantics, self.semantic_counts = np.unique(self.semantics, return_counts=True)
         # enlarge the type of the unique semantics
@@ -170,12 +174,35 @@ class PostProcessing(object):
         # Create a mapping from old indices to new indices
         index_mapping = np.zeros(int(max(self.unique_semantics) + 1), dtype=int)
         index_mapping[self.unique_semantics] = shuffled_indices
-        # Save the index of the background in semantics
-        background_index = np.where(self.semantics == -1)
         # Apply the mapping to self.semantics
         self.semantics = index_mapping[self.semantics]
-        # Set the background to -1
-        self.semantics[background_index] = -1
+
+        if exclude_largest_semantic:
+            # get the indices of the semantics with the largest counts
+            unique_semantics, semantic_counts = np.unique(self.semantics, return_counts=True)
+            largest_semantic_indices = unique_semantics[np.argmax(semantic_counts)]
+
+            # check if the largest semantic is the background
+            if largest_semantic_indices == -1:
+                # get the second largest semantic
+                largest_semantic_indices = unique_semantics[np.argsort(semantic_counts)[-2]]
+            # get the indices of the semantics to exclude
+            exclude_indices = np.where(self.semantics == largest_semantic_indices)
+            # set the semantics to -1
+            self.semantics[exclude_indices] = -2
+
+    def sort_semantic_ids(self, exclude_largest_semantic=False):
+        # Count occurrences of each semantic class
+        unique_semantics, semantic_counts = np.unique(self.semantics, return_counts=True)
+
+        # Sort semantics by count
+        sorted_indices = np.argsort(semantic_counts)
+
+        # Create a mapping from old indices to new sorted indices
+        index_mapping = {old: new for new, old in enumerate(unique_semantics[sorted_indices])}
+
+        # Update semantics using the mapping
+        self.semantics = np.vectorize(index_mapping.get)(self.semantics)
 
         if exclude_largest_semantic:
             # get the indices of the semantics with the largest counts
@@ -226,8 +253,8 @@ if __name__ == "__main__":
     save_las_path = '../../data/box_canyon_park/semantic_model_shuffled.las'
     post_processing.save_semantic_pointcloud(save_las_path)
     """
-    #"""
-    pointcloud_path = '../../data/scannet/ssfm/scene0707_00/reconstructions/mesh_vertices_color.npy'
+    
+    """pointcloud_path = '../../data/scannet/ssfm/scene0707_00/reconstructions/mesh_vertices_color.npy'
     semantics_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantics_276.npy'
     save_las_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantic_276_interpolated.las'
     add_semantics_to_pointcloud(pointcloud_path, semantics_path, save_las_path, nearest_interpolation=5, filter_random_semantics=True, ratio=0.1, MIN_num_semantics=80)
@@ -236,7 +263,7 @@ if __name__ == "__main__":
     post_processing = PostProcessing(semantic_pc_file_path)
     post_processing.shuffle_semantic_ids()
     save_las_path = '../../data/scannet/ssfm/scene0707_00/associations/semantics/semantic_276_interpolated_shuffled.las'
-    post_processing.save_semantic_pointcloud(save_las_path)
+    post_processing.save_semantic_pointcloud(save_las_path)"""
     """
     pointcloud_path = '../../data/scene0000_00/reconstructions/mesh_vertices_color.npy'
     semantics_path = '../../data/scene0000_00/associations/semantics/semantics_613.npy'
@@ -249,3 +276,15 @@ if __name__ == "__main__":
     save_las_path = '../../data/scene0000_00/associations/semantics/semantic_613_interpolated_shuffled_filtered.las'
     post_processing.save_semantic_pointcloud(save_las_path)
     """
+
+    semantic_pc_file_path = '../../data/granite_dells/associations/semantics/semantics_315.las'
+    post_processing = PostProcessing(semantic_pc_file_path)
+    post_processing.shuffle_semantic_ids(exclude_largest_semantic=False)
+    save_las_path = '../../data/granite_dells/associations/semantics/semantics_315_shuffled.las'
+    post_processing.save_semantic_pointcloud(save_las_path)
+
+    semantic_pc_file_path = '../../data/granite_dells/associations/semantics/semantics_315.las'
+    post_processing = PostProcessing(semantic_pc_file_path)
+    post_processing.sort_semantic_ids(exclude_largest_semantic=False)
+    save_las_path = '../../data/granite_dells/associations/semantics/semantics_315_sorted.las'
+    post_processing.save_semantic_pointcloud(save_las_path)
