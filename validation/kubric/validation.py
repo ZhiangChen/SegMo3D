@@ -114,8 +114,12 @@ class Validator(object):
 
 if __name__ == "__main__":
     # validate
+    # validator = Validator(
+    #     "../../data/kubric_0/associations/semantics/semantics_284_shuffled.las",
+    #     "../../data/kubric_0/reconstructions/combined_point_cloud.las"
+    # )
     validator = Validator(
-        "../../data/kubric_0/associations/semantics/semantics_284_shuffled.las",
+        "../../data/kubric_0/associations/sam3d.las",
         "../../data/kubric_0/reconstructions/combined_point_cloud.las"
     )
 

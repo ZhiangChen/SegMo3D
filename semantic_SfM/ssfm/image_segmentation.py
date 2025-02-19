@@ -323,7 +323,7 @@ class ParallelImageSegmentation(object):
         self.distortion_correction = False
         self.segmentation_folder_path = None
         self.maximum_size = None
-        self.save_overlap = None
+        self.save_overlap_ = None
 
     def __predict(self, model_params, image_paths):
         """
@@ -338,7 +338,7 @@ class ParallelImageSegmentation(object):
             else:
                 image_segmentor.set_distortion_correction(self.camera_parameters_path)
 
-        image_segmentor.batch_predict(image_paths, self.segmentation_folder_path, self.maximum_size, self.save_overlap)
+        image_segmentor.batch_predict(image_paths, self.segmentation_folder_path, self.maximum_size, self.save_overlap_)
 
 
     def parallel_predict(self, image_paths, segmentation_folder_path, maximum_size=10000, save_overlap=False, camera_parameters_path=None, additional_camera_parameters_path=None):
@@ -362,7 +362,7 @@ class ParallelImageSegmentation(object):
         
         self.segmentation_folder_path = segmentation_folder_path
         self.maximum_size = maximum_size
-        self.save_overlap = save_overlap
+        self.save_overlap_ = save_overlap
         
         # based on the devices, divide the image_paths
         num_devices = len(self.models_params)
