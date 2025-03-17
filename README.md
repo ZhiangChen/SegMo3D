@@ -10,6 +10,9 @@ SegMo3D is a framework designed to address challenges in large-scale 3D semantic
 ✅ **Seamless Integration with SfM Products**  
 Compatible with **Agisoft Metashape** and **OpenDroneMap (ODM)**.  
 
+
+![SegMo3D Results](./docs/images/gd_results.png)
+
 ✅ **Text-Prompt-Based Object Segmentation**  
 Supports **SAM/SAM2** and **Grounding DINO** for feature selection using natural language prompts.  
 
@@ -17,7 +20,7 @@ Supports **SAM/SAM2** and **Grounding DINO** for feature selection using natural
 Includes synthetic data experiments for validation.  
 📌 **Kubric Data Generator Repository**: [data_generator_3d](https://github.com/ZhiangChen/data_generator_3d)  
 
-![SegMo3D Results](./docs/images/gd_results.png)
+![SegMo3D Results](./docs/images/comparison.png)
 
 ## **Installation**
 Clone the repository and install dependencies:  
