@@ -249,6 +249,13 @@ class SAM3D(object):
             segmentation_files = [f for f in os.listdir(self.segmentation_folder_path) if f.endswith('.npy')]
             self.segmentation_file_paths = [os.path.join(self.segmentation_folder_path, f) for f in keyimage_list if f in segmentation_files]
 
+        basenames = [os.path.basename(f) for f in self.associations_pixel2point_file_paths]
+        self.segmentation_file_paths = [os.path.join(self.segmentation_folder_path, f) for f in basenames]
+        print('Number of segmentation files: ', len(self.segmentation_file_paths))
+        print('Number of pixel2point association files: ', len(self.associations_pixel2point_file_paths))
+        print('Number of point2pixel association files: ', len(self.associations_point2pixel_file_paths))
+
+
         # Check if the number of segmentation files and association files are the same
         assert len(self.segmentation_file_paths) == len(self.associations_pixel2point_file_paths), 'The number of segmentation files and pixel2point association files are not the same.'
         assert len(self.segmentation_file_paths) == len(self.associations_point2pixel_file_paths), 'The number of segmentation files and point2pixel association files are not the same.'
@@ -265,6 +272,8 @@ class SAM3D(object):
             self.segmentation_association_pairs.append((self.segmentation_file_paths[i], self.associations_pixel2point_file_paths[i], 
                                                         self.associations_point2pixel_file_paths[i]))
 
+        print(self.segmentation_association_pairs[-10:])
+
 
         # create a folder to save pcd files
         self.pcd_folder_path = os.path.join(self.association_folder_path, 'pcd')
@@ -275,10 +284,10 @@ class SAM3D(object):
         if not os.path.exists(self.merged_pcd_folder_path):
             os.makedirs(self.merged_pcd_folder_path)
 
-        self.voxel_size = 0.05
+        self.voxel_size = 0.001
         self.voxelize = Voxelize(voxel_size=self.voxel_size, mode='train', keys=('coord', 'color', 'group', 'index'))
         self.threshold_points_number = 50
-        self.overlapping_ratio = 0.2
+        self.overlapping_ratio = 0.5
 
     def get_pcd(self):
         # iterate through self.segmentation_association_pairs and add progress bar
@@ -313,6 +322,8 @@ class SAM3D(object):
         # sort the pcd files based on the number in the file name
         pcd_list = sorted(pcd_list, key=lambda x: int(os.path.basename(x).split('.')[0].split('_')[-1]))
         pcd_list = [os.path.join(self.pcd_folder_path, f) for f in pcd_list]
+
+        # pcd_list = pcd_list[:10]
         
         while len(pcd_list) != 1:
             print(len(pcd_list), flush=True)
@@ -343,6 +354,7 @@ class SAM3D(object):
 
         points = self.points.copy()
         colors = self.colors.copy()
+        
 
         # create a new las file
         # construct a .las file
@@ -411,15 +423,268 @@ class SAM3D(object):
         las.write(save_las_path)
 
 
-if __name__ == '__main__':
-    scene_path = '../../data/kubric_0'
+def sam3d_kubric(scene_path='../../data/kubric_0'):
     pointcloud_path = os.path.join(scene_path, 'reconstructions', 'combined_point_cloud.las')
     segmentation_folder_path = os.path.join(scene_path, 'segmentations_filtered')
     association_folder_path = os.path.join(scene_path, 'associations')
 
     sam3d = SAM3D(pointcloud_path, segmentation_folder_path, association_folder_path)
-    sam3d.get_pcd()
-    final_pcd_path = sam3d.seg_pcd()
-    final_pcd_path = '../../data/kubric_0/associations/merged_pcd/0.npy'
+    # sam3d.get_pcd()
+    # final_pcd_path = sam3d.seg_pcd()
+    #final_pcd_path = '../../data/kubric_0/associations/merged_pcd/0.npy'
+    #final_pcd_path = os.path.join(scene_path, 'associations', 'merged_pcd', os.path.basename(final_pcd_path))
+    final_pcd_path = os.path.join(scene_path, 'associations', 'merged_pcd', '0.npy')
     save_las_path = os.path.join(scene_path, 'associations', 'sam3d.las')
     sam3d.save_las(final_pcd_path, save_las_path, nearest_interpolation=5)
+
+def sam3d_kubric_batch():
+    scene_paths = [os.path.join('../../data', f) for f in os.listdir('../../data') if "kubric" in f]
+    scene_paths_valid = []
+    for scene_path in scene_paths:
+        if os.path.exists(os.path.join(scene_path, 'sampro3d')):
+            scene_paths_valid.append(scene_path)
+
+    scene_paths = scene_paths_valid
+
+    for scene_path in scene_paths:
+        sam3d_kubric(scene_path=scene_path)
+        remove_floor(scene_path, 500, 500)
+
+
+def remove_floor(scene_path, remove_small_N, nearest_interpolation):
+    print(scene_path)
+     
+    pointcloud_path = os.path.join(scene_path, 'reconstructions', 'combined_point_cloud.las')
+    save_las_path = os.path.join(scene_path, 'associations', 'sam3d.las')
+    # load the pointcloud las
+    pc = laspy.read(pointcloud_path)
+    points = np.vstack((pc.x, pc.y, pc.z)).T
+    colors = np.vstack((pc.red, pc.green, pc.blue)).T
+    # semantics_gt is the intensity field in the las file
+    semantics_gt = pc.intensity
+
+    # load the sam3d las
+    sam3d_pc = laspy.read(save_las_path)
+    sam3d_points = np.vstack((sam3d_pc.x, sam3d_pc.y, sam3d_pc.z)).T
+    sam3d_colors = np.vstack((sam3d_pc.red, sam3d_pc.green, sam3d_pc.blue)).T
+    semantics = sam3d_pc.intensity
+
+    # unqiue semantics and their counts
+    unique_semantics, counts = np.unique(semantics_gt, return_counts=True)
+    # the most frequent semantics is the floor
+    floor_id = unique_semantics[np.argmax(counts)]
+    # get non-floor indices
+    non_floor_indices = np.where(semantics_gt != floor_id)[0]
+    # get floor indices
+    floor_indices = np.where(semantics_gt == floor_id)[0]  
+    # print semantics number before
+    print("Unique semantics before: ", np.unique(semantics).shape[0])
+
+    floor_semantic = np.max(semantics) + 1
+    semantics[floor_indices] = floor_semantic
+
+    # print semantics number after
+    print("Unique semantics after: ", np.unique(semantics).shape[0])
+
+    # construct a .las file
+    hdr = laspy.LasHeader(version="1.2", point_format=3)
+    hdr.scale = [0.0001, 0.0001, 0.0001]  # Example scale factor, adjust as needed
+    hdr.offset = np.mean(points, axis=0)
+
+    # Create a LasData object
+    las = laspy.LasData(hdr)
+
+    # Add points
+    las.x = points[:, 0]
+    las.y = points[:, 1]
+    las.z = points[:, 2]
+
+    # Add colors
+    las.red = colors[:, 0]
+    las.green = colors[:, 1]
+    las.blue = colors[:, 2]
+
+    # kDTree and nearest interpolation
+    labeled_points = points[semantics >= 0]
+    labeled_semantics = semantics[semantics >= 0]
+    unlabeled_points = points[semantics < 0]
+
+    # construct a KDTree
+    tree = cKDTree(labeled_points)
+
+    # find the N nearest neighbors for the unlabeled points
+    N = nearest_interpolation
+    distances, indices = tree.query(unlabeled_points, k=N)
+    nearest_semantics = labeled_semantics[indices]
+    # find the most frequent semantics
+    unlabeled_semantics = np.array([np.argmax(np.bincount(nearest_semantics[i])) for i in range(unlabeled_points.shape[0])])
+
+    # combine the labeled and unlabeled semantics
+    combined_semantics = np.zeros(semantics.shape)
+    combined_semantics[semantics >= 0] = labeled_semantics
+    combined_semantics[semantics < 0] = unlabeled_semantics
+
+    # add floor semantics
+    # las.intensity[floor_indices] = floor_semantics
+    # las.intensity[non_floor_indices] = combined_semantics
+    las.intensity = combined_semantics
+
+    # print semantics number after
+    print("Unique semantics after nearest interpolation: ", np.unique(las.intensity).shape[0])
+
+    # Write the LAS file
+    save_las_path_ = save_las_path.replace('.las', '_no_floor.las')
+    las.write(save_las_path_)
+
+def sort_semantic_ids(semantics, exclude_largest_semantic=False):
+    # Count occurrences of each semantic class
+    unique_semantics, semantic_counts = np.unique(semantics, return_counts=True)
+
+    # Sort semantics by count
+    sorted_indices = np.argsort(semantic_counts)
+
+    # Create a mapping from old indices to new sorted indices
+    index_mapping = {old: new for new, old in enumerate(unique_semantics[sorted_indices])}
+
+    # Update semantics using the mapping
+    semantics = np.vectorize(index_mapping.get)(semantics)
+
+    if exclude_largest_semantic:
+        # get the indices of the semantics with the largest counts
+        unique_semantics, semantic_counts = np.unique(semantics, return_counts=True)
+        largest_semantic_indices = unique_semantics[np.argmax(semantic_counts)]
+
+        # check if the largest semantic is the background
+        if largest_semantic_indices == -1:
+            # get the second largest semantic
+            largest_semantic_indices = unique_semantics[np.argsort(semantic_counts)[-2]]
+        # get the indices of the semantics to exclude
+        exclude_indices = np.where(semantics == largest_semantic_indices)
+        # set the semantics to -1
+        semantics[exclude_indices] = -2
+
+    return semantics
+
+def add_semantics_to_pointcloud(pointcloud_path, semantics_las_path, save_las_path, remove_small_N=0, nearest_interpolation=0):
+    """
+    Add semantics to the point cloud and save it as a .las file.
+
+    Parameters
+    ----------
+    pointcloud_path : str, the path to the .las file
+    semantics_path : str, the path to the semantics file
+    save_las_path : str, the path to save the .las file
+    remove_small_N : int, remove the semantics with numbers smaller than N
+    nearest_interpolation : 0, not to use nearest interpolation to assign semantics to the unlabeled points; positive integer, the number of nearest neighbors to use for nearest interpolation
+
+    Returns
+    -------
+    None
+    """
+    if pointcloud_path.endswith('.las'):
+        points, colors = read_las_file(pointcloud_path)
+    elif pointcloud_path.endswith('.npy'):
+        points, colors = read_mesh_file(pointcloud_path)
+        colors = colors * 255
+
+    semantics_pc = laspy.read(semantics_las_path)
+    semantics = semantics_pc.intensity
+
+    print('number of semantics: ', semantics.shape[0])
+
+    semantics_ids = np.unique(semantics)
+    N_semantics = len(semantics_ids)
+
+    print("Before removing small semantics: ")
+    print('maximum of semantics: ', semantics.max())
+    print('number of unique semantics: ', N_semantics)
+
+    # remove the semantics with numbers smaller than a threshold
+    for semantics_id in semantics_ids:
+        if np.sum(semantics == semantics_id) < remove_small_N:
+            semantics[semantics == semantics_id] = -1
+
+    print("After removing small semantics: ")
+    print('number of unique semantics: ', len(np.unique(semantics)))
+            
+
+    # construct a .las file
+    hdr = laspy.LasHeader(version="1.2", point_format=3)
+    hdr.scale = [0.0001, 0.0001, 0.0001]  # Example scale factor, adjust as needed
+    hdr.offset = np.mean(points, axis=0)
+
+    # Create a LasData object
+    las = laspy.LasData(hdr)
+
+    # Add points
+    las.x = points[:, 0]
+    las.y = points[:, 1]
+    las.z = points[:, 2]
+
+    # Add colors
+    las.red = colors[:, 0]
+    las.green = colors[:, 1]
+    las.blue = colors[:, 2]
+
+    # Add semantics
+    if nearest_interpolation == 0:
+        # make the semantics start from 0. For all semantics < 0, set them to the maximum semantics + 1
+        semantics[semantics < 0] = semantics.max() + 1
+        las.intensity = semantics
+    elif nearest_interpolation > 0:
+        # labeled points are the points with semantics >=0; unlabeled points are the points with semantics < 0
+        labeled_points = points[semantics >= 0]
+        labeled_semantics = semantics[semantics >= 0]
+        unlabeled_points = points[semantics < 0]
+
+        # construct a KDTree
+        tree = cKDTree(labeled_points)
+
+        # find the N nearest neighbors for the unlabeled points
+        N = nearest_interpolation
+        distances, indices = tree.query(unlabeled_points, k=N)
+        nearest_semantics = labeled_semantics[indices]
+        # find the most frequent semantics
+        unlabeled_semantics = np.array([np.argmax(np.bincount(nearest_semantics[i])) for i in range(unlabeled_points.shape[0])])
+
+        # combine the labeled and unlabeled semantics
+        combined_semantics = np.zeros(semantics.shape)
+        combined_semantics[semantics >= 0] = labeled_semantics
+        combined_semantics[semantics < 0] = unlabeled_semantics
+
+        combined_semantics = sort_semantic_ids(combined_semantics, exclude_largest_semantic=False)
+
+        las.intensity = combined_semantics
+    
+    else:
+        raise ValueError("nearest_interpolation should be a non-negative integer")
+
+    # Write the LAS file
+    las.write(save_las_path)
+
+def sam3d_gd():
+    scene_path = '../../data/granite_dells'
+    pointcloud_path = os.path.join(scene_path, 'SfM_products', 'granite_dells_downsampled_sam3d.las')
+    segmentation_folder_path = os.path.join(scene_path, 'segmentations_classes')
+    association_folder_path = os.path.join(scene_path, 'associations')
+
+    sam3d = SAM3D(pointcloud_path, segmentation_folder_path, association_folder_path)
+    sam3d.get_pcd()
+    final_pcd_path = sam3d.seg_pcd()
+    final_pcd_path = os.path.join(scene_path, 'associations', 'merged_pcd', 'DJI_0247.npy')
+    semantics_las_path = os.path.join(scene_path, 'associations', 'sam3d.las')
+    save_las_path = os.path.join(scene_path, 'associations', 'sam3d_refine.las')
+    sam3d.save_las(final_pcd_path, semantics_las_path, nearest_interpolation=0)
+    add_semantics_to_pointcloud(pointcloud_path, semantics_las_path, save_las_path, remove_small_N=50, nearest_interpolation=50)
+
+if __name__ == '__main__':
+    """
+    scene_path='../../data/kubric_0'
+    sam3d_kubric(scene_path=scene_path)
+    """
+
+    #sam3d_kubric_batch()
+    sam3d_gd()
+
+    
+    

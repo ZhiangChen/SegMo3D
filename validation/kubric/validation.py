@@ -113,15 +113,24 @@ class Validator(object):
         
 
 if __name__ == "__main__":
+    # ours
     # validate
+    validator = Validator(
+        "../../data/kubric_13/associations/semantics/semantics_284_shuffled.las",
+        "../../data/kubric_13/reconstructions/combined_point_cloud.las"
+    )
+
+    # sam3d
     # validator = Validator(
-    #     "../../data/kubric_0/associations/semantics/semantics_284_shuffled.las",
+    #     "../../data/kubric_0/associations/sam3d.las",
     #     "../../data/kubric_0/reconstructions/combined_point_cloud.las"
     # )
-    validator = Validator(
-        "../../data/kubric_0/associations/sam3d.las",
-        "../../data/kubric_0/reconstructions/combined_point_cloud.las"
-    )
+
+    # sampro3d
+    # validator = Validator(
+    #     "../../data/kubric_119/sampro3d/seg.las",
+    #     "../../data/kubric_119/reconstructions/combined_point_cloud.las"
+    # )
 
     results = validator.validate(np.arange(0.5, 1.0, 0.05))
     mAP = results['AP']
