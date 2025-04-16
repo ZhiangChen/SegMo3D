@@ -124,6 +124,10 @@ class ImageSegmentation(object):
             stability_score_offset = configs.get('stability_score_offset', 0.5)
             box_nms_thresh = configs.get('box_nms_thresh', 0.6)
             use_m2m = configs.get('use_m2m', True)
+            crop_n_layers = configs.get('crop_n_layers', 0)
+
+            if 'crop_n_layers' in configs:
+                crop_n_layers = configs['crop_n_layers']
 
             sam2 = build_sam2(model_cfg, sam2_checkpoint, device=device, apply_postprocessing=False)
 
@@ -135,6 +139,7 @@ class ImageSegmentation(object):
                 stability_score_thresh=stability_score_thresh,
                 stability_score_offset=stability_score_offset,
                 box_nms_thresh=box_nms_thresh,
+                crop_n_layers=crop_n_layers,
                 use_m2m=use_m2m,
             )
 
@@ -325,7 +330,7 @@ class ParallelImageSegmentation(object):
         self.maximum_size = None
         self.save_overlap_ = None
 
-    def __predict(self, model_params, image_paths):
+    def _predict(self, model_params, image_paths):
         """
         Arguments:
             model_params (dict): The parameters of the model.
@@ -338,10 +343,10 @@ class ParallelImageSegmentation(object):
             else:
                 image_segmentor.set_distortion_correction(self.camera_parameters_path)
 
-        image_segmentor.batch_predict(image_paths, self.segmentation_folder_path, self.maximum_size, self.save_overlap_)
+        image_segmentor.batch_predict(image_paths, self.segmentation_folder_path, self.maximum_size, self.save_overlap_, self.skip_existing)
 
 
-    def parallel_predict(self, image_paths, segmentation_folder_path, maximum_size=10000, save_overlap=False, camera_parameters_path=None, additional_camera_parameters_path=None):
+    def parallel_predict(self, image_paths, segmentation_folder_path, maximum_size=10000, save_overlap=False, skip_existing=False, camera_parameters_path=None, additional_camera_parameters_path=None):
         """
         Arguments:
             image_paths (list): A list of image paths.
@@ -363,6 +368,7 @@ class ParallelImageSegmentation(object):
         self.segmentation_folder_path = segmentation_folder_path
         self.maximum_size = maximum_size
         self.save_overlap_ = save_overlap
+        self.skip_existing = skip_existing
         
         # based on the devices, divide the image_paths
         num_devices = len(self.models_params)
@@ -372,7 +378,7 @@ class ParallelImageSegmentation(object):
         image_paths_list.append(image_paths[(num_devices-1)*num_images_per_device:])
 
         # use joblib to parallel predict
-        Parallel(n_jobs=num_devices)(delayed(self.__predict)(self.models_params[i], image_paths_list[i]) for i in range(num_devices))
+        Parallel(n_jobs=num_devices)(delayed(self._predict)(self.models_params[i], image_paths_list[i]) for i in range(num_devices))
 
 
 

@@ -48,6 +48,152 @@ class GroundingDINOMaskFilter(object):
         self.width = cameras['width']
         self.height = cameras['height']
         
+    def load_image_crops(self, image_path, crop_n_layers):
+        transform = T.Compose(
+            [
+                T.RandomResize([800], max_size=1333),
+                T.ToTensor(),
+                T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            ]
+        )
+        image_source = Image.open(image_path).convert("RGB")
+        image = np.asarray(image_source)
+        if self.distortion_params is not None:
+            image = cv2.undistort(image, self.matrix_intrinsics, self.distortion_params)
+        image_source = Image.fromarray(image)
+        image_transformed, _ = transform(image_source, None)
+        # crop the image
+        H, W, _ = image.shape
+        crop_images = []
+
+        for layer in range(crop_n_layers + 1):
+            num_splits = 2 ** layer
+            crop_h = H // num_splits
+            crop_w = W // num_splits
+
+            for i in range(num_splits):
+                for j in range(num_splits):
+                    y0 = i * crop_h
+                    x0 = j * crop_w
+                    y1 = H if i == num_splits - 1 else (i + 1) * crop_h
+                    x1 = W if j == num_splits - 1 else (j + 1) * crop_w
+
+                    image_crop = image[y0:y1, x0:x1]
+                    image_crop_source = Image.fromarray(image_crop)
+                    image_crop_transformed, _ = transform(image_crop_source, None)
+
+                    crop_images.append((image, image_crop_transformed, i, j))
+
+        return crop_images
+
+
+    def predict_bounding_boxes_crops(self, image_folder_path, grounding_dino_config, keyimages_path=None, crop_n_layers=0):
+        assert crop_n_layers >= 0, "The number of layers should be greater than or equal to 0"
+        assert crop_n_layers == int(crop_n_layers), "The number of layers should be an integer"
+        # get image paths
+        assert os.path.exists(image_folder_path), "The image folder does not exist: {}".format(image_folder_path)
+        image_lists = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG') or f.endswith('.jpg')]
+        image_lists.sort()
+        # print the number of images
+        print("The number of images: {}".format(len(image_lists)))
+
+        if keyimages_path is not None:
+            with open(keyimages_path, 'r') as f:
+                keyimages = yaml.load(f, Loader=yaml.FullLoader)
+            # keyimages is a list of image names ending with .npy; remove the extension
+            keyimages = [os.path.basename(k).split('.')[0] for k in keyimages]
+            image_lists = [i for i in image_lists if os.path.basename(i).split('.')[0] in keyimages]    
+
+        if len(image_lists) == 0:
+            # print the error message
+            print("There is no image in the folder: {}".format(image_folder_path))
+            return
+        
+        else:
+            weights_path = grounding_dino_config['weights_path']
+            config_path = grounding_dino_config['config_path']
+            text_prompts = grounding_dino_config['text_prompt']
+            box_treshold = grounding_dino_config['box_treshold']
+            text_treshold = grounding_dino_config['text_treshold']
+            device = grounding_dino_config['device']
+            prediction_save_folder_path = grounding_dino_config['prediction_save_folder_path']
+            remove_background = grounding_dino_config['remove_background']
+
+            if not os.path.exists(prediction_save_folder_path):
+                os.makedirs(prediction_save_folder_path)
+
+            # load the model
+            assert os.path.exists(weights_path), "The weights file does not exist: {}".format(weights_path)
+            assert os.path.exists(config_path), "The config file does not exist: {}".format(config_path)
+            model = load_model(config_path, weights_path, device)
+
+            for i in tqdm(range(len(image_lists))): # for i in tqdm(range(1)):  # 
+                image_path = image_lists[i]
+                boxes_all = []
+                logits_all = []
+                phrases_all = []
+                class_ids_all = []
+                crop_images = self.load_image_crops(image_path, crop_n_layers)
+                for image_source, image, i, j in crop_images:
+                    #image_source, image = self.load_image(image_path)
+                    # get image width and height
+                    self.width, self.height, _ = image_source.shape
+
+                    for label_id, text_prompt in enumerate(text_prompts):
+                        # predict the bounding boxes
+                        # boxes: [N, 4] where N is the number of boxes
+                        # logits: [N] scores of the boxes
+                        # phrases: [N] the predicted phrases of the boxes
+                        boxes, logits, phrases = predict(model=model, 
+                                                        image=image, 
+                                                        caption=text_prompt, 
+                                                        box_threshold=box_treshold, 
+                                                        text_threshold=text_treshold)
+                        
+                        if remove_background:
+                            boxes_width = boxes[:, 2]
+                            boxes_height = boxes[:, 3]
+                            boxes_area = boxes_width * boxes_height
+                            boxes = boxes[boxes_area < 0.9]
+                            logits = logits[boxes_area < 0.9]
+                            phrases = [phrases[i] for i in range(len(phrases)) if boxes_area[i] < 0.9]
+
+                        # convert boxes to the normalized original image coordinates 
+                        cx = (boxes[:, 0] + i) / (crop_n_layers + 1)
+                        cy = (boxes[:, 1] + j) / (crop_n_layers + 1)
+                        w = boxes[:, 2] / (crop_n_layers + 1)
+                        h = boxes[:, 3] / (crop_n_layers + 1)
+                        boxes = torch.stack([cx, cy, w, h], dim=1)
+
+                        boxes_all.append(boxes)
+                        logits_all.append(logits)
+                        phrases_all += phrases
+                        class_ids_all += [label_id] * len(boxes)
+
+
+                # concatenate the boxes, logits, and phrases
+                boxes = torch.cat(boxes_all, dim=0)
+                logits = torch.cat(logits_all, dim=0)
+                phrases = phrases_all
+                annotated_frame = annotate(image_source=image_source, boxes=boxes, logits=logits, phrases=phrases)
+
+                # save the annotated frame
+                image_name = os.path.basename(image_path)
+                save_path = os.path.join(prediction_save_folder_path, image_name)
+                cv2.imwrite(save_path, annotated_frame)
+
+                # boxes have the format of [cx, cy, w, h] and need to be converted to [x1, y1, x2, y2]
+                #boxes = boxes * torch.Tensor([self.width, self.height, self.width, self.height])
+                boxes = box_convert(boxes=boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
+                # concatenate the boxes and logits
+                logits = logits.reshape(-1, 1)
+                class_ids = np.asarray(class_ids_all).reshape(-1, 1)
+                prediction = np.concatenate((boxes, logits, class_ids), axis=1)
+                # save the prediction
+                prediction_name = image_name.split('.')[0] + '.npy'
+                prediction_path = os.path.join(prediction_save_folder_path, prediction_name)
+                np.save(prediction_path, prediction)
+
     def load_image(self, image_path):
         transform = T.Compose(
             [
@@ -253,21 +399,21 @@ if __name__ == "__main__":
     grounding_dino_config = {}
     grounding_dino_config['weights_path'] = "../grounding_DINO/groundingdino_swint_ogc.pth"
     grounding_dino_config['config_path'] = "../grounding_DINO/GroundingDINO_SwinT_OGC.py"
-    grounding_dino_config['prediction_save_folder_path'] = "../../data/courtright/grounding_dino_predictions"
-    grounding_dino_config['text_prompt'] = ["rock"]
-    grounding_dino_config['box_treshold'] = 0.15
-    grounding_dino_config['text_treshold'] = 0.25
-    grounding_dino_config['device'] = 'cuda:5'
+    grounding_dino_config['prediction_save_folder_path'] = "../../data/centennial_bluff/mission_a/grounding_dino_predictions"
+    grounding_dino_config['text_prompt'] = ["rock", "boulder"]
+    grounding_dino_config['box_treshold'] = 0.2
+    grounding_dino_config['text_treshold'] = 0.2
+    grounding_dino_config['device'] = 'cuda:1'
     grounding_dino_config['remove_background'] = True
 
-    mask_folder_path = "../../data/courtright/segmentations_filtered"
-    save_folder_path = "../../data/courtright/segmentations_filtered_semantics"
-    image_folder_path = "../../data/courtright/DJI_photos"
+    mask_folder_path = "../../data/centennial_bluff/mission_a/segmentations_filtered"
+    save_folder_path = "../../data/centennial_bluff/mission_a/segmentations_filtered_semantics"
+    image_folder_path = "../../data/centennial_bluff/mission_a/DJI_photos"
 
     mask_filter = GroundingDINOMaskFilter(mask_folder_path, save_folder_path)
-    mask_filter.set_distortion_correction('../../data/courtright/SfM_products/agisoft_cameras.xml')
+    mask_filter.set_distortion_correction('../../data/centennial_bluff/mission_a/SfM_products/a.xml')
 
-    mask_filter.predict_bounding_boxes(image_folder_path, grounding_dino_config)
+    mask_filter.predict_bounding_boxes_crops(image_folder_path, grounding_dino_config, crop_n_layers=3)
 
     #grounding_dino_prediction_folder_path = grounding_dino_config['prediction_save_folder_path'] 
     

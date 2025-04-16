@@ -313,7 +313,6 @@ class PointcloudProjection(DepthImageRendering):
             depth_folder_path = os.path.join(depth_folder_path, file_name[:-4] + '.npy')
             np.save(depth_folder_path, depth_image)
 
-        return point2pixel
 
     
     def parallel_batch_project_joblib(self, frame_keys, save_folder_path, num_workers=8, save_depth=False):
@@ -360,7 +359,7 @@ class PointcloudProjection(DepthImageRendering):
 if __name__ == "__main__":
     from ssfm.image_segmentation import *
     import time
-    site = 'box_canyon'  # 'box_canyon', 'courtright', 'scannet', 'kubric'
+    site = 'mission_b'  # 'box_canyon', 'courtright', 'scannet', 'kubric', 'mission_a'
 
     single_projection_flag = True  # True: project semantics from one image to the point cloud.
 
@@ -390,6 +389,44 @@ if __name__ == "__main__":
             print('Time for adding colors: ', t2 - t1)
 
             write_las(pointcloud_projector.points, colors, "../../data/box_canyon_park/depth_filter_segmentation.las")
+
+        elif site == 'mission_a':
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.1)
+            pointcloud_projector.read_camera_parameters('../../data/centennial_bluff/mission_a/SfM_products/a.xml')
+            pointcloud_projector.read_mesh('../../data/centennial_bluff/mission_a/SfM_products/a.obj')
+            pointcloud_projector.read_pointcloud('../../data/centennial_bluff/mission_a/SfM_products/a_downsampled.las')
+            
+            pointcloud_projector.read_segmentation('../../data/centennial_bluff/mission_a/segmentations_filtered/DJI_0001.npy')
+            image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0001.JPG')
+
+            # add color to points
+            t1 = time.time()
+            radius = 2
+            decaying = 2
+            colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+            t2 = time.time()
+            print('Time for adding colors: ', t2 - t1)
+
+            write_las(pointcloud_projector.points, colors, "../../data/centennial_bluff/mission_a/depth_filter_segmentation.las")
+
+        elif site == 'mission_b':
+            pointcloud_projector = PointcloudProjection(depth_filtering_threshold=0.1)
+            pointcloud_projector.read_camera_parameters('../../data/centennial_bluff/mission_b/SfM_products/b.xml')
+            pointcloud_projector.read_mesh('../../data/centennial_bluff/mission_b/SfM_products/b.obj')
+            pointcloud_projector.read_pointcloud('../../data/centennial_bluff/mission_b/SfM_products/b_downsampled.las')
+            
+            pointcloud_projector.read_segmentation('../../data/centennial_bluff/mission_b/segmentations_filtered/DJI_0001.npy')
+            image, pixel2point, point2pixel = pointcloud_projector.project('DJI_0001.JPG')
+
+            # add color to points
+            t1 = time.time()
+            radius = 2
+            decaying = 2
+            colors = add_color_to_points(point2pixel, pointcloud_projector.colors, pointcloud_projector.segmentation, pointcloud_projector.image_height, pointcloud_projector.image_width, radius, decaying)
+            t2 = time.time()
+            print('Time for adding colors: ', t2 - t1)
+
+            write_las(pointcloud_projector.points, colors, "../../data/centennial_bluff/mission_b/depth_filter_segmentation.las")
 
         elif site == 'courtright':
             # project the point cloud

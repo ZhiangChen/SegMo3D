@@ -12,6 +12,98 @@ from collections import Counter
 from tqdm import tqdm
 import networkx as nx
 
+from joblib import Parallel, delayed
+from numba import njit, prange, jit
+import uuid
+
+segmented_objects_images_memmap = None
+associations_pixel2point_memmap = None
+associations_point2pixel_memmap = None
+keyimage_associations_memmap = None
+
+
+@njit
+def apply_remap_and_merge(ids, probs, id_map, purge_keys, keep_keys):
+    N, M = ids.shape
+
+    # Step 1: Apply remapping
+    for i in range(N):
+        for j in range(M):
+            val = ids[i, j]
+            if val != -1:
+                ids[i, j] = id_map[val]
+
+    # Step 2: Merge overlapping probabilities
+    for i in range(N):
+        for k in range(len(purge_keys)):
+            purge_id = purge_keys[k]
+            keep_id = keep_keys[k]
+            purge_idx = -1
+            keep_idx = -1
+            for j in range(M):
+                if ids[i, j] == purge_id:
+                    purge_idx = j
+                elif ids[i, j] == keep_id:
+                    keep_idx = j
+            if purge_idx != -1 and keep_idx != -1:
+                probs[i, keep_idx] += probs[i, purge_idx]
+                ids[i, purge_idx] = -1
+                probs[i, purge_idx] = 0
+    return ids, probs
+
+
+def convert_to_numpy_memmap(segmented_objects_images, associations_pixel2point, associations_point2pixel, keyimage_associations):
+    uid = uuid.uuid4().hex
+    # segmented_objects_images
+    N = len(segmented_objects_images)
+    H, W = segmented_objects_images[0].shape
+    dtype = segmented_objects_images[0].dtype
+    segmented_objects_images_path = os.path.join("/dev/shm", "segmented_objects_images_{}.dat".format(uid))
+    segmented_objects_images_memmap = np.memmap(segmented_objects_images_path, dtype=dtype, mode='w+', shape=(N, H, W))
+    for i in range(N):
+        segmented_objects_images_memmap[i] = segmented_objects_images[i]
+
+    # associations_pixel2point
+    N = len(associations_pixel2point)
+    H, W = associations_pixel2point[0].shape
+    dtype = associations_pixel2point[0].dtype
+    associations_pixel2point_path = os.path.join("/dev/shm", "associations_pixel2point_{}.dat".format(uid))
+    associations_pixel2point_memmap = np.memmap(associations_pixel2point_path, dtype=dtype, mode='w+', shape=(N, H, W))
+    for i in range(N):
+        associations_pixel2point_memmap[i] = associations_pixel2point[i]
+
+    # associations_point2pixel
+    N = len(associations_point2pixel)
+    H, W = associations_point2pixel[0].shape
+    dtype = associations_point2pixel[0].dtype
+    associations_point2pixel_path = os.path.join("/dev/shm", "associations_point2pixel_{}.dat".format(uid))
+    associations_point2pixel_memmap = np.memmap(associations_point2pixel_path, dtype=dtype, mode='w+', shape=(N, H, W))
+    for i in range(N):
+        associations_point2pixel_memmap[i] = associations_point2pixel[i]
+    
+    # keyimage_associations, note that keyimage_associations is a 2D array
+    N = keyimage_associations.shape[0]
+    M = keyimage_associations.shape[1]
+    dtype = keyimage_associations.dtype
+    keyimage_associations_path = os.path.join("/dev/shm", "keyimage_associations_{}.dat".format(uid))
+    keyimage_associations_memmap = np.memmap(keyimage_associations_path, dtype=dtype, mode='w+', shape=(N, M))
+    keyimage_associations_memmap[:] = keyimage_associations[:]
+
+    # flush the memmap files to disk
+    segmented_objects_images_memmap.flush()
+    associations_pixel2point_memmap.flush()
+    associations_point2pixel_memmap.flush()
+    keyimage_associations_memmap.flush()
+    # close the memmap files
+    del segmented_objects_images_memmap
+    del associations_pixel2point_memmap
+    del associations_point2pixel_memmap
+    del keyimage_associations_memmap
+
+    # return the paths of the memmap files
+    return segmented_objects_images_path, associations_pixel2point_path, associations_point2pixel_path, keyimage_associations_path
+
+
 def group_lists(lists):
     """
     Group lists that share common elements.
@@ -79,8 +171,16 @@ def group_lists(lists):
 
     return grouped_lists
 
+
+
 @jit(nopython=True)
-def numba_update_pc_segmentation(associations1_point2pixel, segmented_objects_image1, object_manager_array, latest_registered_id, M_segmentation_ids, radius, padded_segmentation, normalized_likelihoods, likelihoods, pc_segmentation_ids, pc_segmentation_probs):
+def numba_update_pc_segmentation(sequence_id, object_manager_array, latest_registered_id, M_segmentation_ids, radius, padded_segmentation, normalized_likelihoods, likelihoods, pc_segmentation_ids, pc_segmentation_probs):
+    global segmented_objects_images_memmap
+    global associations_point2pixel_memmap
+
+    associations1_point2pixel = associations_point2pixel_memmap[sequence_id]
+    segmented_objects_image1 = segmented_objects_images_memmap[sequence_id]
+    
     N_points = associations1_point2pixel.shape[0]
     for point_id in range(N_points):
         u,v = associations1_point2pixel[point_id]
@@ -138,16 +238,20 @@ def numba_update_pc_segmentation(associations1_point2pixel, segmented_objects_im
             #pc_segmentation_ids[point_id] = original_segmentation_ids
             #pc_segmentation_probs[point_id] = original_segmentation_probs
 
+    return pc_segmentation_ids, pc_segmentation_probs
 
-class ObjectRegistration(object):
-    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, image_list=None, loginfo=True, using_graph=False, radius=2, decaying=1):
+
+class SegMo3D(object):
+    def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, image_list=None, loginfo=True, using_graph=False, radius=2, decaying=1, scene_name="scene"):
+        global keyimage_associations
+        
         self.pointcloud_path = pointcloud_path
         self.segmentation_folder_path = segmentation_folder_path
         self.association_folder_path = association_folder_path
         self.loginfo = loginfo
 
         if self.loginfo:
-            logging.basicConfig(filename="object_registration.log", 
+            logging.basicConfig(filename=scene_name + '_object_registration.log', 
                                 format='%(asctime)s %(message)s', 
                                 filemode='w') 
 
@@ -171,11 +275,11 @@ class ObjectRegistration(object):
         if keyimage_associations_file_name is None:
             keyimage_associations_file_path = os.path.join(self.association_folder_path, 'associations_keyimage.npy')
             assert os.path.exists(keyimage_associations_file_path), 'Keyimage association file path does not exist.'
-            self.keyimage_associations = np.load(keyimage_associations_file_path, allow_pickle=True)
+            keyimage_associations = np.load(keyimage_associations_file_path, allow_pickle=True)
         else:
             keyimage_associations_file_path = os.path.join(self.association_folder_path, keyimage_associations_file_name)
             assert os.path.exists(keyimage_associations_file_path), 'Keyimage association file path does not exist.'
-            self.keyimage_associations = np.load(keyimage_associations_file_path, allow_pickle=True)
+            keyimage_associations = np.load(keyimage_associations_file_path, allow_pickle=True)
 
 
         # Load pixel2point association files (.npy) and sort them
@@ -268,9 +372,6 @@ class ObjectRegistration(object):
 
         # initialize data structures
         self.latest_registered_id = 0  # the latest registered object id
-        self.associations_pixel2point = []
-        self.associations_point2pixel = []
-        self.segmented_objects_images = []
 
         # pre-compute gaussian weights
         self.radius = radius
@@ -279,13 +380,14 @@ class ObjectRegistration(object):
 
         self.registered_object_manager = dict()  # the key is the image id and object id; the value is the registered object id
         self.image_id = 0
+        self.sequence_id = 0
 
     
-    def update_object_manager2(self, object_id, key_image, object2_id_image2, intersected_points):
+    def update_object_manager2(self, object_id, key_image_id, object2_id_image2, intersected_points):
         if intersected_points is None:
             registered_objects_id = None
         else:
-            registered_objects_id = self.registered_object_manager[(key_image, object2_id_image2)]
+            registered_objects_id = self.registered_object_manager[(key_image_id, object2_id_image2)]
 
         if object_id not in self.object_manager.keys():
             if registered_objects_id == None:
@@ -335,10 +437,16 @@ class ObjectRegistration(object):
                     self.object_manager[object_id].append(registered_objects_id)
                 else:
                     pass
+        
 
-    def update_pc_segmentation(self, associations1_point2pixel, segmented_objects_image1):
+    def update_pc_segmentation(self):
+
+        t1 = time.time()
         registered_object_id_list = list(self.object_manager.values())
         group_registered_object_id_list = group_lists(registered_object_id_list)
+
+        t2 = time.time()
+        
 
         purge_object_id_map = dict()  # the key is the registered object id to be purged and the value is the registered object id to be kept
         for group_registered_object_id in group_registered_object_id_list:
@@ -347,6 +455,8 @@ class ObjectRegistration(object):
             else:
                 for object_id in group_registered_object_id[1:]:
                     purge_object_id_map[object_id] = group_registered_object_id[0]
+
+        t3 = time.time()
 
         # purge self.object_manager
         for object_id, registered_object_ids in self.object_manager.items():
@@ -361,6 +471,8 @@ class ObjectRegistration(object):
                         registered_object_ids.remove(registered_object_id)
                 else:
                     pass
+
+        t4 = time.time()
         
         # update registered_object_manager
         for object_id, registered_object_ids in self.object_manager.items():
@@ -373,30 +485,24 @@ class ObjectRegistration(object):
                 else:
                     registered_object_id = registered_object_ids[0]
                 self.registered_object_manager[(self.image_id, object_id)] = registered_object_id
-            
-        for purge_object_id, keep_object_id in purge_object_id_map.items():
-            purge = self.pc_segmentation_ids == purge_object_id
-            keep = self.pc_segmentation_ids == keep_object_id
-            purge_any = np.any(purge, axis=1)
-            keep_any = np.any(keep, axis=1)
-            purge_any_intersect_keep_any = np.logical_and(purge_any, keep_any)
 
-            purge_exclude_keep_any = purge.copy()
-            purge_exclude_keep_any[purge_any_intersect_keep_any] = False
+        t5= time.time()
 
-            purge_intersect_keep_any = purge.copy()
-            purge_intersect_keep_any[~purge_any_intersect_keep_any] = False
+        max_seg_id = np.max(self.pc_segmentation_ids)
+        id_map = np.arange(max_seg_id + 2, dtype=np.int32)
+        for purge_id, keep_id in purge_object_id_map.items():
+            id_map[purge_id] = keep_id
 
-            keep_intersect_purge_any = keep.copy()
-            keep_intersect_purge_any[~purge_any_intersect_keep_any] = False
+        # Prepare key arrays
+        purge_keys = np.array(list(purge_object_id_map.keys()), dtype=np.int32)
+        keep_keys = np.array(list(purge_object_id_map.values()), dtype=np.int32)
 
-            self.pc_segmentation_ids[purge_exclude_keep_any] = keep_object_id
-            self.pc_segmentation_ids[purge_intersect_keep_any] = -1
-            
+        # Apply optimized remapping & merging
+        self.pc_segmentation_ids, self.pc_segmentation_probs = apply_remap_and_merge(
+            self.pc_segmentation_ids, self.pc_segmentation_probs, id_map, purge_keys, keep_keys
+        )
 
-            self.pc_segmentation_probs[keep_intersect_purge_any] += self.pc_segmentation_probs[purge_intersect_keep_any]
-            
-            self.pc_segmentation_probs[purge_intersect_keep_any] = 0
+        t6 = time.time()
 
 
         # construct object_manager_array where the first column is the object id and the second column is the registered object id
@@ -408,23 +514,29 @@ class ObjectRegistration(object):
             else:
                 object_manager_array[i, 1] = registered_object_ids[0]
 
-        numba_update_pc_segmentation(associations1_point2pixel, 
-                                    segmented_objects_image1, 
+        t7 = time.time()
+
+        
+        self.pc_segmentation_ids, self.pc_segmentation_probs = numba_update_pc_segmentation(
+                                    self.sequence_id,
                                     object_manager_array, 
                                     self.latest_registered_id, 
                                     self.M_segmentation_ids, 
                                     self.radius, 
                                     self.padded_segmentation, 
                                     self.normalized_likelihoods, 
-                                    self.likelihoods, 
-                                    self.pc_segmentation_ids, 
+                                    self.likelihoods,
+                                    self.pc_segmentation_ids,
                                     self.pc_segmentation_probs)
+
+        t8 = time.time()
+
+        self.logger.info("    time elapsed in update_pc_segmentation: {} {} {} {} {} {} {}".format(t1-t2, t2-t3, t3-t4, t4-t5, t5-t6, t6-t7, t7-t8))
         
                 
         self.latest_registered_id += len(self.normalized_likelihoods)
 
     def save_prob_semantics(self):
-        # save pc_segmentation_ids and pc_segmentation_probs 
         pc_segmentation_save_path = os.path.join(self.association_folder_path, 'semantics', str(self.image_id) + '_segmentation_ids.npy')
         np.save(pc_segmentation_save_path, self.pc_segmentation_ids)
         pc_segmentation_probs_save_path = os.path.join(self.association_folder_path, 'semantics', str(self.image_id) + '_segmentation_probs.npy')
@@ -470,13 +582,13 @@ class ObjectRegistration(object):
         las.write(save_las_path)
 
 
-    def search_object2(self, key_image, pixel_object1_image2):
+    def search_object2(self, key_image_id, pixel_object1_image2):
         """
         Within pixels of object1 in image2, search for object2 that has the largest number of semantics ids. 
 
         Parameters
         ----------
-        key_image : int, the key image id
+        key_image_id : int, the key image id
         pixel_object1_image2 : 2D array of shape (N_pixels, 2), where each row is a pixel coordinate (u, v)
 
         Returns
@@ -484,7 +596,9 @@ class ObjectRegistration(object):
         max_count_id : int, the object id of object2
         pixel_object2_image2 : list of point indices
         """
-        segmented_objects_image2 = self.segmented_objects_images[key_image]
+        global segmented_objects_images_memmap
+        key_sequence_id = np.where(self.keyimage_idx_list == key_image_id)[0][0]
+        segmented_objects_image2 = segmented_objects_images_memmap[key_sequence_id]
         object_ids_object1_image2 = segmented_objects_image2[pixel_object1_image2[:, 0], pixel_object1_image2[:, 1]]
         #logging.info('    object_ids_object1_image2: {}'.format(object_ids_object1_image2))
         if len(object_ids_object1_image2) == 0:
@@ -514,7 +628,7 @@ class ObjectRegistration(object):
         iou = intersection / union
         return iou, intersected_points
 
-    def object_registration(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False, save_semantic_las=False):
+    def segmo3d(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False, save_semantic_las=False):
         """
         Register objects in the point cloud.
 
@@ -529,23 +643,29 @@ class ObjectRegistration(object):
         -------
         None
         """
+
+        global segmented_objects_images_memmap
+        global associations_pixel2point_memmap
+        global associations_point2pixel_memmap
+        global keyimage_associations_memmap
+
+
         N_images = len(self.segmentation_association_pairs)
 
-        self.M_keyimages = M_keyimages
         self.M_segmentation_ids = M_segmentation_ids
 
         self.pc_segmentation_ids = -np.ones((self.N_points, self.M_segmentation_ids), dtype=np.int32)
         self.pc_segmentation_probs = np.zeros((self.N_points, self.M_segmentation_ids), dtype=np.float32)
 
-        for image_id in tqdm(range(N_images), desc="Processing images"):
-            self.image_id = image_id
-            # logging the current, total number images, and image name
-            if self.loginfo:
-                self.logger.info(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')
-                #print(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')    
+        self.keyimage_idx_list = np.where(np.sum(keyimage_associations, axis=0) > 0)[0]
 
-            t1 =   time.time()
-            # load segmentation and association files
+
+        segmented_objects_images = []
+        associations_pixel2point = []
+        associations_point2pixel = []
+
+
+        for image_id in self.keyimage_idx_list:
             segmentation_file_path = self.segmentation_association_pairs[image_id][0]
             associations_pixel2point_file_path = self.segmentation_association_pairs[image_id][1]
             associations_point2pixel_file_path = self.segmentation_association_pairs[image_id][2]
@@ -554,12 +674,43 @@ class ObjectRegistration(object):
             associations1_pixel2point = np.load(associations_pixel2point_file_path, allow_pickle=True)
             associations1_point2pixel = np.load(associations_point2pixel_file_path, allow_pickle=True)
 
-            self.segmented_objects_images.append(segmented_objects_image1)
-            self.associations_pixel2point.append(associations1_pixel2point)
-            self.associations_point2pixel.append(associations1_point2pixel)
+            segmented_objects_images.append(segmented_objects_image1)
+            associations_pixel2point.append(associations1_pixel2point)
+            associations_point2pixel.append(associations1_point2pixel)
 
+        print(f"Memory size of segmented_objects_images: {sum(arr.nbytes for arr in segmented_objects_images) / 1024**3:.3f} GB")
+        print(f"Memory size of associations_pixel2point: {sum(arr.nbytes for arr in associations_pixel2point) / 1024**3:.3f} GB")
+        print(f"Memory size of associations_point2pixel: {sum(arr.nbytes for arr in associations_point2pixel) / 1024**3:.3f} GB")
+        print(f"Memory size of pc_segmentation_ids: {self.pc_segmentation_ids.nbytes / 1024**3:.3f} GB")
+        print(f"Memory size of pc_segmentation_probs: {self.pc_segmentation_probs.nbytes / 1024**3:.3f} GB")
 
-            # pre-compute padded segmentation and normalized likelihoods
+        segmented_objects_images_path, associations_pixel2point_path, associations_point2pixel_path, keyimage_associations_path = convert_to_numpy_memmap(
+            segmented_objects_images, 
+            associations_pixel2point, 
+            associations_point2pixel, 
+            keyimage_associations)
+
+        # load segmented_objects_images, associations_pixel2point, associations_point2pixel, keyimage_associations
+        segmented_objects_images_memmap = np.memmap(segmented_objects_images_path, dtype=segmented_objects_images[0].dtype, mode='r', shape=(len(segmented_objects_images), segmented_objects_images[0].shape[0], segmented_objects_images[0].shape[1]))
+        associations_pixel2point_memmap = np.memmap(associations_pixel2point_path, dtype=associations_pixel2point[0].dtype, mode='r', shape=(len(associations_pixel2point), associations_pixel2point[0].shape[0], associations_pixel2point[0].shape[1]))
+        associations_point2pixel_memmap = np.memmap(associations_point2pixel_path, dtype=associations_point2pixel[0].dtype, mode='r', shape=(len(associations_point2pixel), associations_point2pixel[0].shape[0], associations_point2pixel[0].shape[1]))
+        keyimage_associations_memmap = np.memmap(keyimage_associations_path, dtype=keyimage_associations.dtype, mode='r', shape=(keyimage_associations.shape[0], keyimage_associations.shape[1]))
+
+        
+        
+        
+        for sequence_id, image_id in tqdm(enumerate(self.keyimage_idx_list), total=len(self.keyimage_idx_list), desc="Processing images"):
+            self.sequence_id = sequence_id
+            self.image_id = image_id
+            # logging the current, total number images, and image name
+            if self.loginfo:
+                self.logger.info(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')
+                #print(f'Processing image {image_id+1}/{N_images}: {os.path.basename(self.segmentation_association_pairs[image_id][0])}')    
+
+            t1 = time.time()
+
+            segmented_objects_image1 = segmented_objects_images_memmap[self.sequence_id]
+
             image_height, image_width = segmented_objects_image1.shape
             self.padded_segmentation = -np.ones((2*self.radius+image_height+2, 2*self.radius+image_width+2)).astype(np.int16)
             self.padded_segmentation[self.radius+1:self.radius+image_height+1, self.radius+1:self.radius+image_width+1] = segmented_objects_image1
@@ -568,109 +719,53 @@ class ObjectRegistration(object):
             N_objects = int(segmented_objects_image1.max() + 1)
 
             self.object_manager = dict()  # the key is the object id and the value is a list of registered object ids.
-
-            for object_id in range(N_objects):
-                pixel_object1_image1_bool = segmented_objects_image1 == object_id
-                
-                point_object1_image1 = associations1_pixel2point[pixel_object1_image1_bool] # point_object1_image1 is a list of point ids
-                point_object1_image1 = point_object1_image1[point_object1_image1 != -1]
-                point_object1_image1_bool = np.zeros(self.N_points, dtype=bool)
-                point_object1_image1_bool[point_object1_image1] = True
-                
-
-                # get the keyimages of object_id
-                if image_id == 0:
-                    keyimages = []
-                else:
-                    if self.using_graph:
-                        if image_id not in self.edges.keys():
-                            keyimage_ids = []
-                        else:
-                            keyimage_ids = self.edges[image_id]
-                            # remove the keyimage ids that have not been registered, image id smaller than image_id
-                            keyimage_ids = [keyimage_id for keyimage_id in keyimage_ids if keyimage_id < image_id]
-                        if len(keyimage_ids) == 0:
-                            keyimages = []
-                        else:
-                            keyimages = self.keyimage_associations[point_object1_image1_bool, :image_id]
-                            keyimages = keyimages[:, keyimage_ids]
-
-                            keyimages = np.sum(keyimages, axis=0) 
-                            descending_indices = np.argsort(keyimages)[::-1]
-                            nonzero_indices = np.argwhere(keyimages > 0).reshape(-1)
-
-                            if len(nonzero_indices) > self.M_keyimages:
-                                descending_indices = descending_indices[:self.M_keyimages]
-                            else:
-                                descending_indices = nonzero_indices
-
-                            keyimages = [keyimage_ids[i] for i in descending_indices]                      
-                            
-                    else:
-                        keyimages = self.keyimage_associations[point_object1_image1_bool, :image_id]
-                        keyimages = np.sum(keyimages, axis=0) 
-                        descending_indices = np.argsort(keyimages)[::-1]
-                        nonzero_indices = np.argwhere(keyimages > 0).reshape(-1)
-                        if len(nonzero_indices) > self.M_keyimages:
-                            descending_indices = descending_indices[:self.M_keyimages]
-                        else:
-                            descending_indices = nonzero_indices
-                        
-                        keyimages = descending_indices.tolist()
-
-                # process keyimages
-                if len(keyimages) == 0:
-                    self.update_object_manager(object_id, None)
-                else:
-                    # iterate over all key images
-                    for key_image in keyimages:
-                        associations2_pixel2point = self.associations_pixel2point[key_image]
-                        associations2_point2pixel = self.associations_point2pixel[key_image]
-
-                        pixel_object1_image2 = associations2_point2pixel[point_object1_image1]
-                        pixel_object1_image2 = pixel_object1_image2[pixel_object1_image2[:, 0] != -1]
-                        point_object1_image2 = associations2_pixel2point[pixel_object1_image2[:, 0], pixel_object1_image2[:, 1]]  # point_object1_image2 is a list of point ids
-
-                        object2_id_image2, pixel_object2_image2 = self.search_object2(key_image, pixel_object1_image2)
-
-                        if object2_id_image2 == -1:
-                            self.update_object_manager(object_id, None)
-                        else:
-                            point_object2_image2 = associations2_pixel2point[pixel_object2_image2[:, 0], pixel_object2_image2[:, 1]]  # point_object2_image2 is a list of point ids
-                            point_object2_image2 = point_object2_image2[point_object2_image2 != -1]
-                            pixel_object2_image1 = associations1_point2pixel[point_object2_image2]
-                            pixel_object2_image1 = pixel_object2_image1[pixel_object2_image1[:, 0] != -1]
-                            point_object2_image1 = associations1_pixel2point[pixel_object2_image1[:, 0], pixel_object2_image1[:, 1]]
-
-                            iou, intersected_points = self.calculate_3D_IoU(point_object1_image2, point_object2_image1)
-
-                            if self.loginfo:
-                                self.logger.info("    object_id: {}, key_image: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image, object2_id_image2, iou))
-
-                            if iou >= iou_threshold:
-                                #self.update_object_manager(object_id, intersected_points)
-                                self.update_object_manager2(object_id, key_image, object2_id_image2, intersected_points)
-                            else:
-                                self.update_object_manager(object_id, None)
             
+            # parallel processing using joblib
+            results_list = Parallel(n_jobs=8, prefer='threads')(delayed(self.process_single_object)(
+                object_id,
+                self.N_points,
+                M_keyimages,
+                iou_threshold
+                ) for object_id in range(N_objects))
+
+            t2 = time.time()
+            if self.loginfo:
+                self.logger.info("    time elapsed for processing all objects: {}".format(t2-t1))
+
+
+            for results in results_list:
+                for result in results:
+                    if len(result) == 2:
+                        self.update_object_manager(result[0], result[1])
+                    elif len(result) == 4:
+                        self.update_object_manager2(result[0], result[1], result[2], result[3])
+                    else:
+                        raise ValueError('The length of result is not 2 or 4.')
+
             t3 = time.time()
             if self.loginfo:
-                self.logger.info("    time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
+                self.logger.info("    time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t2))
                 #print("time elapsed for updating object_manager {}: {}".format(image_id+1, t3-t1))
+                
+
+                # print registered_object_manager
+                #print('    registered_object_manager: {}'.format(self.registered_object_manager))
+
+                #print('    object_manager: {}'.format(self.object_manager))
 
                 # logging self.object_manager
                 self.logger.info('    object_manager: {}'.format(self.object_manager))
 
-            self.update_pc_segmentation(associations1_point2pixel, segmented_objects_image1)
+            self.update_pc_segmentation()
             t4 = time.time()
             
             if self.loginfo:
                 self.logger.info("    time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
                 #print("time elapsed for updating pc_segmentation {}: {}".format(image_id+1, t4-t3))
 
-            t2 = time.time()
+            t5 = time.time()
             if self.loginfo:
-                self.logger.info("    time elapsed for image {}: {}".format(image_id+1, t2-t1))
+                self.logger.info("    time elapsed for image {}: {}".format(image_id+1, t5-t1))
                 #print("time elapsed for image {}: {}".format(image_id+1, t2-t1))
         
             if save_semantics:
@@ -683,32 +778,132 @@ class ObjectRegistration(object):
 
                 if save_semantic_las:
                     save_las_path = os.path.join(self.association_folder_path, 'semantics', 'semantics_{}.las'.format(image_id))
-                    add_semantics_to_pointcloud(self.pointcloud_path, save_semantics_path, save_las_path)   
+                    add_semantics_to_pointcloud(self.pointcloud_path, save_semantics_path, save_las_path) 
+
+        # delete the memmap files
+        os.remove(segmented_objects_images_path)
+        os.remove(associations_pixel2point_path)
+        os.remove(associations_point2pixel_path)
+        os.remove(keyimage_associations_path)  
+           
+    def process_single_object(
+        self,
+        object_id, 
+        N_points,
+        M_keyimages,
+        iou_threshold,
+        edges=None):
+
+        global keyimage_associations_memmap
+        global associations_pixel2point_memmap
+        global associations_point2pixel_memmap
+        global segmented_objects_images_memmap
+
+        segmented_objects_image1 = segmented_objects_images_memmap[self.sequence_id]
+        associations1_pixel2point = associations_pixel2point_memmap[self.sequence_id]
+        associations1_point2pixel = associations_point2pixel_memmap[self.sequence_id]
+
+        pixel_object1_image1_bool = segmented_objects_image1 == object_id
+        point_object1_image1 = associations1_pixel2point[pixel_object1_image1_bool] # point_object1_image1 is a list of point ids
+        point_object1_image1 = point_object1_image1[point_object1_image1 != -1]
+        point_object1_image1_bool = np.zeros(N_points, dtype=bool)
+        point_object1_image1_bool[point_object1_image1] = True
+
+        object_updates = []
+
+        # get the keyimages of object_id
+        if self.sequence_id == 0:
+            keyimages = []
+        else:
+            if edges is not None:
+                pass
+            else:
+                keyimages = keyimage_associations_memmap[point_object1_image1_bool, :self.image_id]
+                keyimages = np.sum(keyimages, axis=0) 
+                descending_indices = np.argsort(keyimages)[::-1]
+                nonzero_indices = np.argwhere(keyimages > 0).reshape(-1)
+                if len(nonzero_indices) > M_keyimages:
+                    descending_indices = descending_indices[:M_keyimages]
+                else:
+                    descending_indices = nonzero_indices
+                
+                keyimages = descending_indices.tolist()
+
+        if len(keyimages) == 0:
+            #self.update_object_manager(object_id, None)
+            object_updates.append((object_id, None))
+
+        else:
+            # iterate over all key images
+            for key_image_id in keyimages:
+                # find sequence_id from the index of self.keyimage_idx_list
+                key_sequence_id = np.where(self.keyimage_idx_list == key_image_id)[0][0]
+                associations2_pixel2point = associations_pixel2point_memmap[key_sequence_id]
+                associations2_point2pixel = associations_point2pixel_memmap[key_sequence_id]
+
+                pixel_object1_image2 = associations2_point2pixel[point_object1_image1]
+                pixel_object1_image2 = pixel_object1_image2[pixel_object1_image2[:, 0] != -1]
+                point_object1_image2 = associations2_pixel2point[pixel_object1_image2[:, 0], pixel_object1_image2[:, 1]]  # point_object1_image2 is a list of point ids
+
+                object2_id_image2, pixel_object2_image2 = self.search_object2(key_image_id, pixel_object1_image2)
+
+                if object2_id_image2 == -1:
+                    #self.update_object_manager(object_id, None)
+                    object_updates.append((object_id, None))
+                else:
+                    point_object2_image2 = associations2_pixel2point[pixel_object2_image2[:, 0], pixel_object2_image2[:, 1]]  # point_object2_image2 is a list of point ids
+                    point_object2_image2 = point_object2_image2[point_object2_image2 != -1]
+                    pixel_object2_image1 = associations1_point2pixel[point_object2_image2]
+                    pixel_object2_image1 = pixel_object2_image1[pixel_object2_image1[:, 0] != -1]
+                    point_object2_image1 = associations1_pixel2point[pixel_object2_image1[:, 0], pixel_object2_image1[:, 1]]
+
+                    iou, intersected_points = self.calculate_3D_IoU(point_object1_image2, point_object2_image1)
+
+                    if self.loginfo:
+                        self.logger.info("    object_id: {}, key_image_id: {}, object2_id_image2: {}, iou: {}".format(object_id, key_image_id, object2_id_image2, iou))
+
+                    if iou >= iou_threshold:
+                        #self.update_object_manager2(object_id, key_image_id, object2_id_image2, intersected_points)
+                        object_updates.append((object_id, key_image_id, object2_id_image2, intersected_points))
+                    else:
+                        #self.update_object_manager(object_id, None)
+                        object_updates.append((object_id, None))
+        
+        return object_updates
+
+
                     
 
 if __name__ == "__main__":
     # Set paths
-    pointcloud_path = '../../data/box_canyon_park/SfM_products/agisoft_model.las'
-    segmentation_folder_path = '../../data/box_canyon_park/segmentations'
-    image_folder_path = '../../data/box_canyon_park/DJI_photos'
-    association_folder_path = '../../data/box_canyon_park/associations'
+    scene_dir = '../../data/kubric_0'
+    pointcloud_path = os.path.join(scene_dir, 'reconstructions', 'combined_point_cloud.las')
+    associations_folder_path = os.path.join(scene_dir, 'associations')
+    segmentations_folder_path = os.path.join(scene_dir, 'segmentations')
+    photos_folder_path = os.path.join(scene_dir, 'photos')
 
-    object_registration_flag = True
-    add_semantics_to_pointcloud_flag = False
-    if object_registration_flag:
+    segmo3d_option = True
+    save_semantics = True
+    scene_name = "kubric_0_segmo3d_8"
+    postprocessing_option = True
+
+
+    image_list = [f for f in os.listdir(photos_folder_path) if f.endswith('.png')]
+    image_list.sort(key=lambda x: int(x.split('/')[-1].split('.')[0]))
+
+    keyimage_associations_file_name = 'associations_keyimage.npy'
+
+    if segmo3d_option:
         # Create object registration
-        t1 = time.time()
-        obr = ObjectRegistration(pointcloud_path, segmentation_folder_path, association_folder_path)
-        t2 = time.time()
-        print('Time elapsed for creating object registration: {}'.format(t2-t1))
-
+        obr = SegMo3D(pointcloud_path, segmentations_folder_path, associations_folder_path, keyimage_associations_file_name=keyimage_associations_file_name, image_list=image_list, scene_name=scene_name)
         # Run object registration
-        obr.object_registration(iou_threshold=0.5, save_semantics=True)
-        #obr.object_registration(iou_threshold=0.5)
+        obr.segmo3d(iou_threshold=0.5, save_semantics=save_semantics)
 
-    if add_semantics_to_pointcloud_flag:
-        # Add semantics to the point cloud
-        image_id = 50
-        semantics_folder_path = os.path.join(association_folder_path, 'semantics', 'semantics_{}.npy'.format(image_id))
-        save_las_path = os.path.join(association_folder_path, 'semantics', 'semantics_{}.las'.format(image_id))
-        add_semantics_to_pointcloud(pointcloud_path, semantics_folder_path, save_las_path)   
+
+    if postprocessing_option:
+        from ssfm.post_processing import *
+        image_id = 284
+        semantics_folder_path = os.path.join(associations_folder_path, 'semantics', 'semantics_{}.npy'.format(image_id))
+        save_las_path = os.path.join(associations_folder_path, 'semantics', 'semantics_{}.las'.format(image_id))
+        add_semantics_to_pointcloud(pointcloud_path, semantics_folder_path, save_las_path, remove_small_N=500, nearest_interpolation=500)
+

@@ -75,12 +75,16 @@ class KeyimageAssociationsBuilder(object):
         # build associations
         self.associations_keyimage = np.full((self.N_points, self.N_images), False, dtype=bool)
 
+        valid_keyimage_idx = []
         for k in tqdm(range(len(self.point2pixel_file_paths))):
             segmentation = np.load(self.segmentation_pixel2point_pairs[k][0])
             pixel2point = np.load(self.segmentation_pixel2point_pairs[k][1])
             pixel2point[segmentation == -1] = -1
             valid_point_ids = pixel2point[pixel2point != -1]
             self.associations_keyimage[valid_point_ids, k] = True
+            # if the segmentation is not empty, add the index to the valid_keyimage_idx
+            if len(valid_point_ids) > 0:
+                valid_keyimage_idx.append(k)
 
         # save associations
         save_file_path = os.path.join(self.read_folder_path, 'associations_keyimage.npy')
@@ -92,8 +96,10 @@ class KeyimageAssociationsBuilder(object):
         with open(save_file_path, 'w') as f:
             yaml.dump(image_file_names, f)
 
+        return valid_keyimage_idx
 
-    def build_graph(self, num_chunks=0):
+
+    def build_graph(self, num_chunks=0, device='cuda:0'):
         """
         Build a graph from the associations_keyimage matrix
 
@@ -106,6 +112,8 @@ class KeyimageAssociationsBuilder(object):
         
         t2 = time.time()
         edges = []
+
+        device = torch.device(device)
 
         if num_chunks == 0:
             # CPU-based method
@@ -132,7 +140,7 @@ class KeyimageAssociationsBuilder(object):
                 end_idx = (chunk + 1) * chunk_size if chunk < num_chunks - 1 else self.N_points
 
                 # Move current chunk of associations_keyimage to GPU
-                associations_keyimage_chunk = torch.tensor(self.associations_keyimage[start_idx:end_idx, :]).cuda()
+                associations_keyimage_chunk = torch.tensor(self.associations_keyimage[start_idx:end_idx, :]).to(device)
 
                 # Process each image in the current chunk
                 for i in range(self.N_images):
@@ -307,16 +315,27 @@ class KeyimageAssociationsBuilder(object):
 
 
 if __name__ == '__main__':
-    scene_dir = '../../data/courtright'
+    scene_dir = '../../data/centennial_bluff/mission_a'
+    associations_folder_path = os.path.join(scene_dir, 'associations_1_')
+    segmentations_folder_path = os.path.join(scene_dir, 'segmentations_class_filter')
     photo_folder_path = os.path.join(scene_dir, 'DJI_photos')
     image_list = [f for f in os.listdir(photo_folder_path) if f.endswith('.JPG')]
     # sort image list based on the values in the image file names
     image_list = sorted(image_list, key=lambda x: int(x.split('_')[1].split('.')[0]))
-    smc_solver = KeyimageAssociationsBuilder(image_list, '../../data/courtright/associations', '../../data/courtright/segmentations')
-    smc_solver.build_associations()
+    #smc_solver = KeyimageAssociationsBuilder(image_list, associations_folder_path, segmentations_folder_path)
+    #valid_keyimage_idx = smc_solver.build_associations()
     #smc_solver.read_associations('../../data/courtright/associations/associations_keyimage.npy')
     #smc_solver.find_min_cover()
     #smc_solver.refine(0.5)
-    smc_solver.build_graph(num_chunks=10)
-    smc_solver.add_camera_to_graph([os.path.join(scene_dir, 'SfM_products', 'agisoft_cameras.xml')], camera_type="Agisoft")
+    #smc_solver.build_graph(num_chunks=10)
+    #smc_solver.add_camera_to_graph([os.path.join(scene_dir, 'SfM_products', 'agisoft_cameras.xml')], camera_type="Agisoft")
+
+    keyimage_association_path = os.path.join(associations_folder_path, 'associations_keyimage.npy')
+    keyimage_association = np.load(keyimage_association_path)
+
+    # get valid keyimage index from keyimage_association
+    keyimage_index = np.where(np.sum(keyimage_association, axis=0) > 0)[0]
+
+    print(keyimage_index)
+
     

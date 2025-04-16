@@ -8,6 +8,9 @@ from tqdm import tqdm
 from threading import Lock
 
 class SegmentationExtraction:
+    """
+    Class to extract segmentation masks from JSON files and save them as NumPy arrays.
+    """
     def __init__(self, image_folder, segmentation_folder, output_folder):
         # assert exists 
         assert os.path.exists(segmentation_folder), "Segmentation folder does not exist"

@@ -10,6 +10,62 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 import os
 from skimage.morphology import dilation, square  
+import natsort
+
+
+class HollowMaskFilter(object):
+    def __init__(self) -> None:
+        pass
+
+    def __call__(self, config):
+        segmentation_folder_path = config.get('segmentation_folder_path', None)
+        output_folder_path = config.get('output_folder_path', None)
+        num_processes = config.get('num_processes', 8)
+        min_area = config.get('min_area', 50)
+        min_fill_ratio = config.get('min_fill_ratio', 0.3)
+
+        assert segmentation_folder_path is not None, "Segmentation folder path is not provided"
+        os.makedirs(output_folder_path, exist_ok=True)
+        # Get list of segmentation files
+        segmentation_files = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if f.endswith('.npy')]
+        segmentation_files = natsort.natsorted(segmentation_files)
+        # Process files in parallel
+        Parallel(n_jobs=num_processes)(delayed(self.process_file)(segmentation_file, min_area, min_fill_ratio, output_folder_path) for segmentation_file in tqdm(segmentation_files))
+
+    def _is_hollow_mask(self, mask, min_area, min_fill_ratio):
+        area = np.sum(mask)
+        if area < min_area:
+            return True
+
+        x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
+        bbox_area = w * h
+        fill_ratio = area / bbox_area if bbox_area > 0 else 0
+
+        return fill_ratio < min_fill_ratio
+
+    def process_file(self, segmentation_file, min_area, min_fill_ratio, output_folder_path):
+        masks = np.load(segmentation_file)
+        mask_ids = np.unique(masks)
+        keep_ids = []
+        for mask_id in mask_ids:
+            if mask_id == -1:
+                continue
+            mask = (masks == mask_id).astype(np.uint8)
+            if self._is_hollow_mask(mask, min_area, min_fill_ratio):
+                continue
+            else:
+                keep_ids.append(mask_id)
+
+        masks_filtered = np.zeros_like(masks) - 1
+        # np.int16
+        masks_filtered = masks_filtered.astype(np.int16)
+        for i in range(len(keep_ids)):
+            masks_filtered[masks == keep_ids[i]] = i
+
+        # Save the result to the output folder
+        file_name = os.path.basename(segmentation_file)
+        output_file_path = os.path.join(output_folder_path, file_name)
+        np.save(output_file_path, masks_filtered)
 
 
 class AreaFilter(object):
@@ -66,6 +122,8 @@ class SimpleMaskFilter(object):
         self.area_upper_threshold = configs.get('area_upper_threshold', 9)
         self.area_lower_threshold = configs.get('area_lower_threshold', 0.01)
         self.camera_parameter_file = configs.get('camera_parameter_file', None)
+        self.skip_existing = configs.get('skip_existing', False)
+
         if self.area_filter:
             if self.camera_parameter_file.endswith('.xml'):
                 self.focal_length, self.pixel_size = self.read_camera_parameters_agisoft(self.camera_parameter_file)  # this needs to be checked, might be wrong
@@ -168,6 +226,9 @@ class SimpleMaskFilter(object):
     def filter_segmentation_file(self, segmentation_file_path):
         masks = np.load(segmentation_file_path)
         file_name = os.path.basename(segmentation_file_path)
+        output_file_path = os.path.join(self.output_folder, file_name)
+        if self.skip_existing and os.path.exists(output_file_path):
+            return
         valid_masks_id_maf = self.moving_average_filter(masks)
         if self.erosion_kernel_size > 0:
             masks = self.erode_mask(masks)
@@ -182,13 +243,14 @@ class SimpleMaskFilter(object):
         filtered_masks = np.zeros_like(masks) - 1
         for i, mask_id in enumerate(valid_masks_id):
             filtered_masks[masks == mask_id] = i     
-        output_file_path = os.path.join(self.output_folder, file_name)
+        
         np.save(output_file_path, filtered_masks)
         
 
     def filter_batch_processes(self, segmentation_folder_path, num_processes=8):
         assert os.path.exists(segmentation_folder_path), "The folder does not exist"
         self.segmentation_files = [os.path.join(segmentation_folder_path, f) for f in os.listdir(segmentation_folder_path) if f.endswith('.npy')]
+        self.segmentation_files = natsort.natsorted(self.segmentation_files)
 
         # sort the files
         self.segmentation_files.sort()
@@ -201,6 +263,8 @@ class SimpleMaskFilter(object):
         Parallel(n_jobs=num_processes)(delayed(self.filter_segmentation_file)(f) for f in tqdm(self.segmentation_files))
 
 if __name__ == "__main__":
+    None
+    """    
     segmentation_folder_path = "../../data/courtright/segmentations"
 
     configs = {
@@ -212,6 +276,7 @@ if __name__ == "__main__":
         'erosion_kernel_size': 5,
         'erosion_iteration':1,
         'camera_parameter_file': "../../data/courtright/SfM_products/agisoft_cameras.xml",
+        'skip_existing': False,
         'background_mask': True
     }
 
@@ -222,5 +287,17 @@ if __name__ == "__main__":
     #mask_filter.filter_batch_processes(segmentation_folder_path)
     t2 = time.time()
     print(f"Time taken: {t2 - t1} seconds")
+    """
+
+    # example for HollowMaskFilter
+    config = { 
+        "segmentation_folder_path": "../../data/centennial_bluff/mission_a/segmentations/",
+        "output_folder_path": "../../data/centennial_bluff/mission_a/segmentations_filtered/",
+        "num_processes": 32,
+        "min_area": 1000,
+        "min_fill_ratio": 0.3
+    }
+    mask_filter = HollowMaskFilter()
+    mask_filter(config)
 
     
