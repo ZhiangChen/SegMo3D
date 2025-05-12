@@ -24,6 +24,20 @@ keyimage_associations_memmap = None
 
 @njit
 def apply_remap_and_merge(ids, probs, id_map, purge_keys, keep_keys):
+    """
+    Apply remapping and merge overlapping probabilities.
+    Parameters
+    ----------
+    ids : 2D array of shape (N, M), where N is the number of points and M is the number of segmentation ids
+    probs : 2D array of shape (N, M), where N is the number of points and M is the number of segmentation ids
+    id_map : 1D array of shape (max_id + 1,), where max_id is the maximum id in ids
+    purge_keys : 1D array of shape (K,), where K is the number of keys to purge
+    keep_keys : 1D array of shape (K,), where K is the number of keys to keep
+    Returns
+    -------
+    ids : 2D array of shape (N, M), where N is the number of points and M is the number of segmentation ids
+    probs : 2D array of shape (N, M), where N is the number of points and M is the number of segmentation ids
+    """
     N, M = ids.shape
 
     # Step 1: Apply remapping
@@ -107,16 +121,12 @@ def convert_to_numpy_memmap(segmented_objects_images, associations_pixel2point, 
 def group_lists(lists):
     """
     Group lists that share common elements.
-    
     Parameters
     ----------
     lists : list of lists
-    
     Returns
     -------
     grouped_lists : list of lists
-    
-    
     Example
     -------
     lists = [
@@ -135,7 +145,6 @@ def group_lists(lists):
     for list_index, elements in enumerate(lists):
         for element in elements:
             element_to_list_map[element].append(list_index)
-
     # Find connected components of the list indices graph
     def dfs(list_index, visited, group):
         visited[list_index] = True
@@ -143,7 +152,6 @@ def group_lists(lists):
         for neighbour in adjacency_list[list_index]:
             if not visited[neighbour]:
                 dfs(neighbour, visited, group)
-
     # Create an adjacency list for the graph where each node represents a list
     # and an edge connects lists that share at least one element
     adjacency_list = defaultdict(set)
@@ -151,7 +159,6 @@ def group_lists(lists):
         for list_index in indices:
             adjacency_list[list_index].update(indices)
             adjacency_list[list_index].remove(list_index)
-
     # Use DFS to find all connected components of the graph
     visited = [False] * len(lists)
     groups = []
@@ -160,7 +167,6 @@ def group_lists(lists):
             group = []
             dfs(list_index, visited, group)
             groups.append(group)
-
     # Group the lists according to connected components
     grouped_lists = []
     for group in groups:
@@ -168,9 +174,7 @@ def group_lists(lists):
         for list_index in group:
             grouped_list.update(lists[list_index])
         grouped_lists.append(sorted(grouped_list))
-
     return grouped_lists
-
 
 
 @jit(nopython=True)
@@ -193,8 +197,9 @@ def numba_update_pc_segmentation(sequence_id, object_manager_array, latest_regis
             # construct an array where the first column is the object id and the second column is the normalized object probability
             new_likelihoods_array = np.zeros((len(normalized_likelihoods), 2), dtype=np.float32)
 
+            # fill the new_likelihoods_array with object ids and normalized object probabilities
             for i in range(len(normalized_likelihoods)):
-                if normalized_likelihoods[i] > 0.001:
+                if normalized_likelihoods[i] > 0.00001:
                     registered_object_ids_kernel = object_manager_array[i, 1]
                     if registered_object_ids_kernel == -1:
                         new_likelihoods_array[i, 0] = i+latest_registered_id
@@ -251,7 +256,7 @@ class SegMo3D(object):
         self.loginfo = loginfo
 
         if self.loginfo:
-            logging.basicConfig(filename=scene_name + '_object_registration.log', 
+            logging.basicConfig(filename=scene_name + '_segmo3d.log', 
                                 format='%(asctime)s %(message)s', 
                                 filemode='w') 
 
@@ -474,6 +479,7 @@ class SegMo3D(object):
 
         t4 = time.time()
         
+
         # update registered_object_manager
         for object_id, registered_object_ids in self.object_manager.items():
             # check the length of values in self.object_manager
@@ -491,7 +497,7 @@ class SegMo3D(object):
         max_seg_id = np.max(self.pc_segmentation_ids)
         id_map = np.arange(max_seg_id + 2, dtype=np.int32)
         for purge_id, keep_id in purge_object_id_map.items():
-            id_map[purge_id] = keep_id
+            id_map[purge_id] = keep_id  # IndexError: index 752138 is out of bounds for axis 0 with size 752128
 
         # Prepare key arrays
         purge_keys = np.array(list(purge_object_id_map.keys()), dtype=np.int32)
@@ -628,7 +634,7 @@ class SegMo3D(object):
         iou = intersection / union
         return iou, intersected_points
 
-    def segmo3d(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False, save_semantic_las=False):
+    def segmo3d(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False, save_semantic_las=False, explicit_background=False):
         """
         Register objects in the point cloud.
 
@@ -638,6 +644,8 @@ class SegMo3D(object):
         M_segmentation_ids : int, the maximum number of segmentation ids for each point
         M_keyimages : int, the maximum number of key images for each object
         save_semantics : bool, whether to save semantics for each image
+        save_semantic_las : bool, whether to save semantic point cloud
+        explicit_background : bool, whether to use explicit background
 
         Returns
         -------
@@ -659,6 +667,7 @@ class SegMo3D(object):
 
         self.keyimage_idx_list = np.where(np.sum(keyimage_associations, axis=0) > 0)[0]
 
+        self.explicit_background = explicit_background
 
         segmented_objects_images = []
         associations_pixel2point = []
@@ -851,6 +860,11 @@ class SegMo3D(object):
                     #self.update_object_manager(object_id, None)
                     object_updates.append((object_id, None))
                 else:
+                    if self.explicit_background:
+                        if object2_id_image2 == 0:
+                            if object_id != 0:
+                                object_updates.append((object_id, None))
+                                continue
                     point_object2_image2 = associations2_pixel2point[pixel_object2_image2[:, 0], pixel_object2_image2[:, 1]]  # point_object2_image2 is a list of point ids
                     point_object2_image2 = point_object2_image2[point_object2_image2 != -1]
                     pixel_object2_image1 = associations1_point2pixel[point_object2_image2]

@@ -19,7 +19,10 @@ class GroundingDINOMaskFilter(object):
         self.mask_folder_path = mask_folder_path
         self.save_folder_path = save_folder_path
 
-        assert os.path.exists(self.mask_folder_path), "The mask folder does not exist: {}".format(self.mask_folder_path)
+        if not os.path.exists(self.mask_folder_path):
+            print("The mask folder does not exist: {}".format(self.mask_folder_path))
+
+
         if not os.path.exists(self.save_folder_path):
             os.makedirs(self.save_folder_path)
         
@@ -92,7 +95,7 @@ class GroundingDINOMaskFilter(object):
         assert crop_n_layers == int(crop_n_layers), "The number of layers should be an integer"
         # get image paths
         assert os.path.exists(image_folder_path), "The image folder does not exist: {}".format(image_folder_path)
-        image_lists = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG') or f.endswith('.jpg')]
+        image_lists = [os.path.join(image_folder_path, f) for f in os.listdir(image_folder_path) if f.endswith('.JPG') or f.endswith('.jpg') or f.endswith('.png')]
         image_lists.sort()
         # print the number of images
         print("The number of images: {}".format(len(image_lists)))
@@ -396,27 +399,45 @@ class GroundingDINOMaskFilter(object):
 
 
 if __name__ == "__main__":
+    # grounding_dino_config = {}
+    # grounding_dino_config['weights_path'] = "../grounding_DINO/groundingdino_swint_ogc.pth"
+    # grounding_dino_config['config_path'] = "../grounding_DINO/GroundingDINO_SwinT_OGC.py"
+    # grounding_dino_config['prediction_save_folder_path'] = "../../data/centennial_bluff/mission_a/grounding_dino_predictions"
+    # grounding_dino_config['text_prompt'] = ["rock", "boulder"]
+    # grounding_dino_config['box_treshold'] = 0.2
+    # grounding_dino_config['text_treshold'] = 0.2
+    # grounding_dino_config['device'] = 'cuda:1'
+    # grounding_dino_config['remove_background'] = True
+
+    # mask_folder_path = "../../data/centennial_bluff/mission_a/segmentations_filtered"
+    # save_folder_path = "../../data/centennial_bluff/mission_a/segmentations_filtered_semantics"
+    # image_folder_path = "../../data/centennial_bluff/mission_a/DJI_photos"
+
+    # mask_filter = GroundingDINOMaskFilter(mask_folder_path, save_folder_path)
+    # mask_filter.set_distortion_correction('../../data/centennial_bluff/mission_a/SfM_products/a.xml')
+
+    # mask_filter.predict_bounding_boxes_crops(image_folder_path, grounding_dino_config, crop_n_layers=3)
+
+
     grounding_dino_config = {}
     grounding_dino_config['weights_path'] = "../grounding_DINO/groundingdino_swint_ogc.pth"
     grounding_dino_config['config_path'] = "../grounding_DINO/GroundingDINO_SwinT_OGC.py"
-    grounding_dino_config['prediction_save_folder_path'] = "../../data/centennial_bluff/mission_a/grounding_dino_predictions"
+    grounding_dino_config['prediction_save_folder_path'] = "../../data/eaton/detection"
     grounding_dino_config['text_prompt'] = ["rock", "boulder"]
-    grounding_dino_config['box_treshold'] = 0.2
-    grounding_dino_config['text_treshold'] = 0.2
-    grounding_dino_config['device'] = 'cuda:1'
+    grounding_dino_config['box_treshold'] = 0.31
+    grounding_dino_config['text_treshold'] = 0.31
+    grounding_dino_config['device'] = 'cuda:2'
     grounding_dino_config['remove_background'] = True
 
     mask_folder_path = "../../data/centennial_bluff/mission_a/segmentations_filtered"
-    save_folder_path = "../../data/centennial_bluff/mission_a/segmentations_filtered_semantics"
-    image_folder_path = "../../data/centennial_bluff/mission_a/DJI_photos"
+    save_folder_path = "../../data/eaton/detection"
+    image_folder_path = "../../data/eaton/photos"
+
+    # print out device name
+    device = torch.device(grounding_dino_config['device'])
+    print(f"Using device: {device}")
 
     mask_filter = GroundingDINOMaskFilter(mask_folder_path, save_folder_path)
-    mask_filter.set_distortion_correction('../../data/centennial_bluff/mission_a/SfM_products/a.xml')
 
-    mask_filter.predict_bounding_boxes_crops(image_folder_path, grounding_dino_config, crop_n_layers=3)
+    mask_filter.predict_bounding_boxes_crops(image_folder_path, grounding_dino_config, crop_n_layers=1)
 
-    #grounding_dino_prediction_folder_path = grounding_dino_config['prediction_save_folder_path'] 
-    
-    #mask_filter.filter(('../../data/courtright/segmentations_filtered/DJI_0576.npy', '../../data/courtright/grounding_dino_predictions/DJI_0576.npy'))
-    #mask_filter.filter_batch(grounding_dino_prediction_folder_path)
-    

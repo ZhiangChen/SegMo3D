@@ -720,7 +720,8 @@ if __name__ == '__main__':
     annotation_option = False
     classification_option = False
     prediction_image_option = False
-    prediction_mask_option = True
+    prediction_mask_option = False
+    change_background_to_object_option = True
 
     model_names = [
         "regnet_y_16gf",
@@ -824,6 +825,16 @@ if __name__ == '__main__':
 
         predictor.classify_masks(mask_folder_path, image_folder_path, output_folder_path, model_path=model_path, camera_parameter_file=camera_parameter_file, batch_size=batch_size, save_overlap=save_overlap, indices=indices_list[0])
         print(f"\n✅ Classification complete. Results saved to {output_folder_path}")
+
+
+    if change_background_to_object_option:
+        segmentation_masks = [f for f in os.listdir(segmentation_filter_folder_path) if f.endswith('.npy')]
+        for mask_file in tqdm.tqdm(segmentation_masks):
+            mask_path = os.path.join(segmentation_filter_folder_path, mask_file)
+            mask = np.load(mask_path)
+            new_mask = mask + 2
+            # save the new mask to overwrite the old mask
+            np.save(mask_path, new_mask)
 
 
         
