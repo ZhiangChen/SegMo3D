@@ -200,13 +200,8 @@ def numba_update_pc_segmentation(sequence_id, object_manager_array, latest_regis
             # fill the new_likelihoods_array with object ids and normalized object probabilities
             for i in range(len(normalized_likelihoods)):
                 if normalized_likelihoods[i] > 0.00001:
-                    registered_object_ids_kernel = object_manager_array[i, 1]
-                    if registered_object_ids_kernel == -1:
-                        new_likelihoods_array[i, 0] = i+latest_registered_id
-                        new_likelihoods_array[i, 1] = normalized_likelihoods[i]
-                    else:
-                        new_likelihoods_array[i, 0] = registered_object_ids_kernel
-                        new_likelihoods_array[i, 1] = normalized_likelihoods[i]
+                    new_likelihoods_array[i, 0] = object_manager_array[i, 1]
+                    new_likelihoods_array[i, 1] = normalized_likelihoods[i]
                 else:
                     pass
 
@@ -388,15 +383,19 @@ class SegMo3D(object):
         self.sequence_id = 0
 
     
-    def update_object_manager2(self, object_id, key_image_id, object2_id_image2, intersected_points):
-        if intersected_points is None:
+    def update_object_manager(self, object_id, key_image_id, object2_id_image2, intersected_points):
+        if key_image_id is None:
             registered_objects_id = None
+        elif key_image_id == -1:
+            registered_objects_id = -1
         else:
             registered_objects_id = self.registered_object_manager[(key_image_id, object2_id_image2)]
 
         if object_id not in self.object_manager.keys():
             if registered_objects_id == None:
                 self.object_manager[object_id] = []
+            elif registered_objects_id == -1:
+                self.object_manager[object_id] = [-1]
             else:
                 self.object_manager[object_id] = [registered_objects_id]
         else:
@@ -407,50 +406,12 @@ class SegMo3D(object):
                     self.object_manager[object_id].append(registered_objects_id)
                 else:
                     pass
-        
 
-    def update_object_manager(self, object_id, intersected_points):
-        if intersected_points is None:
-            registered_objects_id = None
-        else:  
-            # if intersected_points is not None, get the object id with the maximum probability
-            ids = self.pc_segmentation_ids[intersected_points, :]
-            probs = self.pc_segmentation_probs[intersected_points, :]
-
-            # Flatten the arrays and compute the sum of probabilities for each unique id
-            unique_ids, indices = np.unique(ids, return_inverse=True)
-            summed_probs = np.bincount(indices, weights=probs.flatten())
-
-            # Find the id with the maximum probability sum
-            max_prob_index = np.argmax(summed_probs)
-            registered_objects_id = unique_ids[max_prob_index]
-
-            # log registered_objects_id
-            if self.loginfo:
-                self.logger.info('    registered_objects_id: {}'.format(registered_objects_id))
-
-        if object_id not in self.object_manager.keys():
-            if registered_objects_id == None:
-                self.object_manager[object_id] = []
-            else:
-                self.object_manager[object_id] = [registered_objects_id]
-        else:
-            if registered_objects_id == None:
-                pass
-            else:
-                if registered_objects_id not in self.object_manager[object_id]:
-                    self.object_manager[object_id].append(registered_objects_id)
-                else:
-                    pass
         
 
     def update_pc_segmentation(self):
-
-        t1 = time.time()
         registered_object_id_list = list(self.object_manager.values())
         group_registered_object_id_list = group_lists(registered_object_id_list)
-
-        t2 = time.time()
         
 
         purge_object_id_map = dict()  # the key is the registered object id to be purged and the value is the registered object id to be kept
@@ -460,8 +421,6 @@ class SegMo3D(object):
             else:
                 for object_id in group_registered_object_id[1:]:
                     purge_object_id_map[object_id] = group_registered_object_id[0]
-
-        t3 = time.time()
 
         # purge self.object_manager
         for object_id, registered_object_ids in self.object_manager.items():
@@ -477,8 +436,6 @@ class SegMo3D(object):
                 else:
                     pass
 
-        t4 = time.time()
-        
 
         # update registered_object_manager
         for object_id, registered_object_ids in self.object_manager.items():
@@ -492,10 +449,11 @@ class SegMo3D(object):
                     registered_object_id = registered_object_ids[0]
                 self.registered_object_manager[(self.image_id, object_id)] = registered_object_id
 
-        t5= time.time()
 
         max_seg_id = np.max(self.pc_segmentation_ids)
-        id_map = np.arange(max_seg_id + 2, dtype=np.int32)
+        max_purge_id = max(purge_object_id_map.keys(), default=max_seg_id)
+        id_map_size = max(max_seg_id, max_purge_id) + 2  # Buffer
+        id_map = np.arange(id_map_size, dtype=np.int32)   # Default sequential mapping
         for purge_id, keep_id in purge_object_id_map.items():
             id_map[purge_id] = keep_id  # IndexError: index 752138 is out of bounds for axis 0 with size 752128
 
@@ -508,21 +466,16 @@ class SegMo3D(object):
             self.pc_segmentation_ids, self.pc_segmentation_probs, id_map, purge_keys, keep_keys
         )
 
-        t6 = time.time()
-
 
         # construct object_manager_array where the first column is the object id and the second column is the registered object id
         object_manager_array = -np.ones((len(self.object_manager), 2), dtype=np.int32)
         for i, (object_id, registered_object_ids) in enumerate(self.object_manager.items()):
             object_manager_array[i, 0] = object_id
             if registered_object_ids == []:
-                object_manager_array[i, 1] = -1
+                object_manager_array[i, 1] = object_id + self.latest_registered_id
             else:
                 object_manager_array[i, 1] = registered_object_ids[0]
 
-        t7 = time.time()
-
-        
         self.pc_segmentation_ids, self.pc_segmentation_probs = numba_update_pc_segmentation(
                                     self.sequence_id,
                                     object_manager_array, 
@@ -535,11 +488,7 @@ class SegMo3D(object):
                                     self.pc_segmentation_ids,
                                     self.pc_segmentation_probs)
 
-        t8 = time.time()
 
-        self.logger.info("    time elapsed in update_pc_segmentation: {} {} {} {} {} {} {}".format(t1-t2, t2-t3, t3-t4, t4-t5, t5-t6, t6-t7, t7-t8))
-        
-                
         self.latest_registered_id += len(self.normalized_likelihoods)
 
     def save_prob_semantics(self):
@@ -634,7 +583,7 @@ class SegMo3D(object):
         iou = intersection / union
         return iou, intersected_points
 
-    def segmo3d(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False, save_semantic_las=False, explicit_background=False):
+    def segmo3d(self, iou_threshold=0.75, M_segmentation_ids=5, M_keyimages=5, save_semantics=False, save_semantic_las=False, save_semantics_all=False, explicit_background=False):
         """
         Register objects in the point cloud.
 
@@ -645,6 +594,7 @@ class SegMo3D(object):
         M_keyimages : int, the maximum number of key images for each object
         save_semantics : bool, whether to save semantics for each image
         save_semantic_las : bool, whether to save semantic point cloud
+        save_semantics_all : bool, whether to save all semantics ids and probabilities
         explicit_background : bool, whether to use explicit background
 
         Returns
@@ -706,8 +656,6 @@ class SegMo3D(object):
         keyimage_associations_memmap = np.memmap(keyimage_associations_path, dtype=keyimage_associations.dtype, mode='r', shape=(keyimage_associations.shape[0], keyimage_associations.shape[1]))
 
         
-        
-        
         for sequence_id, image_id in tqdm(enumerate(self.keyimage_idx_list), total=len(self.keyimage_idx_list), desc="Processing images"):
             self.sequence_id = sequence_id
             self.image_id = image_id
@@ -744,12 +692,7 @@ class SegMo3D(object):
 
             for results in results_list:
                 for result in results:
-                    if len(result) == 2:
-                        self.update_object_manager(result[0], result[1])
-                    elif len(result) == 4:
-                        self.update_object_manager2(result[0], result[1], result[2], result[3])
-                    else:
-                        raise ValueError('The length of result is not 2 or 4.')
+                    self.update_object_manager(result[0], result[1], result[2], result[3])
 
             t3 = time.time()
             if self.loginfo:
@@ -786,8 +729,15 @@ class SegMo3D(object):
                 self.save_semantics(save_semantics_path)
 
                 if save_semantic_las:
-                    save_las_path = os.path.join(self.association_folder_path, 'semantics', 'semantics_{}.las'.format(image_id))
+                    save_las_path = os.path.join(self.association_folder_path, 'semantics', 'semantics_{}.las'.format(image_id+1))
                     add_semantics_to_pointcloud(self.pointcloud_path, save_semantics_path, save_las_path) 
+
+            if save_semantics_all:
+                # create a folder to save semantics under self.association_folder_path
+                semantics_folder_path = os.path.join(self.association_folder_path, 'semantics')
+                if not os.path.exists(semantics_folder_path):
+                    os.makedirs(semantics_folder_path)
+                self.save_prob_semantics()
 
         # delete the memmap files
         os.remove(segmented_objects_images_path)
@@ -840,7 +790,7 @@ class SegMo3D(object):
 
         if len(keyimages) == 0:
             #self.update_object_manager(object_id, None)
-            object_updates.append((object_id, None))
+            object_updates.append((object_id, None, None, None))
 
         else:
             # iterate over all key images
@@ -858,12 +808,12 @@ class SegMo3D(object):
 
                 if object2_id_image2 == -1:
                     #self.update_object_manager(object_id, None)
-                    object_updates.append((object_id, None))
+                    object_updates.append((object_id, -1, None, None))
                 else:
                     if self.explicit_background:
                         if object2_id_image2 == 0:
                             if object_id != 0:
-                                object_updates.append((object_id, None))
+                                object_updates.append((object_id, None, None, None))
                                 continue
                     point_object2_image2 = associations2_pixel2point[pixel_object2_image2[:, 0], pixel_object2_image2[:, 1]]  # point_object2_image2 is a list of point ids
                     point_object2_image2 = point_object2_image2[point_object2_image2 != -1]
@@ -881,7 +831,7 @@ class SegMo3D(object):
                         object_updates.append((object_id, key_image_id, object2_id_image2, intersected_points))
                     else:
                         #self.update_object_manager(object_id, None)
-                        object_updates.append((object_id, None))
+                        object_updates.append((object_id, None, None, None))
         
         return object_updates
 
