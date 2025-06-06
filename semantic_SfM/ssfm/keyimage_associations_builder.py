@@ -98,6 +98,18 @@ class KeyimageAssociationsBuilder(object):
 
         return valid_keyimage_idx
 
+    def build_associations_downsampling_background(self):
+        associations_keyimage = np.full((self.N_points, self.N_images), False, dtype=bool)
+        
+        for k in tqdm(range(len(self.point2pixel_file_paths))):
+            segmentation = np.load(self.segmentation_pixel2point_pairs[k][0])
+            pixel2point = np.load(self.segmentation_pixel2point_pairs[k][1])
+            pixel2point[segmentation == 0] = -1
+            valid_point_ids = pixel2point[pixel2point != -1]
+            associations_keyimage[valid_point_ids, k] = True
+
+        return associations_keyimage
+
 
     def build_graph(self, num_chunks=0, device='cuda:0'):
         """

@@ -145,35 +145,41 @@ def group_lists(lists):
     for list_index, elements in enumerate(lists):
         for element in elements:
             element_to_list_map[element].append(list_index)
-    # Find connected components of the list indices graph
-    def dfs(list_index, visited, group):
-        visited[list_index] = True
-        group.append(list_index)
-        for neighbour in adjacency_list[list_index]:
-            if not visited[neighbour]:
-                dfs(neighbour, visited, group)
-    # Create an adjacency list for the graph where each node represents a list
-    # and an edge connects lists that share at least one element
+
+    # Build adjacency list
     adjacency_list = defaultdict(set)
     for indices in element_to_list_map.values():
         for list_index in indices:
-            adjacency_list[list_index].update(indices)
-            adjacency_list[list_index].remove(list_index)
-    # Use DFS to find all connected components of the graph
+            adjacency_list[list_index].update(i for i in indices if i != list_index)
+
     visited = [False] * len(lists)
     groups = []
+
+    # Iterative DFS
     for list_index in range(len(lists)):
         if not visited[list_index]:
+            stack = [list_index]
             group = []
-            dfs(list_index, visited, group)
+            visited[list_index] = True
+
+            while stack:
+                current = stack.pop()
+                group.append(current)
+                for neighbor in adjacency_list[current]:
+                    if not visited[neighbor]:
+                        visited[neighbor] = True
+                        stack.append(neighbor)
+
             groups.append(group)
-    # Group the lists according to connected components
+
+    # Combine lists based on groups
     grouped_lists = []
     for group in groups:
-        grouped_list = set()
-        for list_index in group:
-            grouped_list.update(lists[list_index])
-        grouped_lists.append(sorted(grouped_list))
+        merged = set()
+        for idx in group:
+            merged.update(lists[idx])
+        grouped_lists.append(sorted(merged))
+
     return grouped_lists
 
 
@@ -243,6 +249,20 @@ def numba_update_pc_segmentation(sequence_id, object_manager_array, latest_regis
 
 class SegMo3D(object):
     def __init__(self, pointcloud_path, segmentation_folder_path, association_folder_path, keyimage_associations_file_name=None, image_list=None, loginfo=True, using_graph=False, radius=2, decaying=1, scene_name="scene"):
+        """
+        Parameters
+        ----------
+        pointcloud_path : str, the path to the point cloud file
+        segmentation_folder_path : str, the path to the segmentation folder
+        association_folder_path : str, the path to the association folder
+        keyimage_associations_file_name : str, the name of the keyimage associations file
+        image_list : list of str, the list of image file names
+        loginfo : bool, whether to log information
+        using_graph : bool, whether to use graph
+        radius : int, the radius for gaussian likelihood
+        decaying : int, the decaying factor for gaussian likelihood
+        scene_name : str, the name of the scene
+        """
         global keyimage_associations
         
         self.pointcloud_path = pointcloud_path
@@ -595,7 +615,7 @@ class SegMo3D(object):
         save_semantics : bool, whether to save semantics for each image
         save_semantic_las : bool, whether to save semantic point cloud
         save_semantics_all : bool, whether to save all semantics ids and probabilities
-        explicit_background : bool, whether to use explicit background
+        explicit_background : bool, whether to use explicit background. When True, the background has to be set to 0 in the segmentation file before running the code.
 
         Returns
         -------

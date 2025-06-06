@@ -710,15 +710,16 @@ class RockClassifier:
 
 
 if __name__ == '__main__':
-    image_folder_path = "../../data/centennial_bluff/mission_a/DJI_photos"
-    segmentation_folder_path = "../../data/centennial_bluff/mission_a/segmentations_filtered"
-    save_folder_path = "../../data/centennial_bluff/mission_a/segmentations_extraction"
-    camera_parameters_file = "../../data/centennial_bluff/mission_a/SfM_products/a.xml"
-    segmentation_filter_folder_path = "../../data/centennial_bluff/mission_a/segmentations_class_filter"
+    image_folder_path = "../../data/centennial_bluff/mission_b/DJI_photos"
+    segmentation_folder_path = "../../data/centennial_bluff/mission_b/segmentations_filtered"
+    save_folder_path = "../../data/centennial_bluff/mission_b/segmentations_extraction"
+    camera_parameters_file = "../../data/centennial_bluff/mission_b/SfM_products/b.xml"
+    segmentation_filter_folder_path = "../../data/centennial_bluff/mission_b/segmentations_class_filter"
     
     extract_segmentation_option = False
     annotation_option = False
     classification_option = False
+    validation_option = False
     prediction_image_option = False
     prediction_mask_option = False
     change_background_to_object_option = True
@@ -747,7 +748,7 @@ if __name__ == '__main__':
 
     if classification_option:
 
-        model_name = 'resnext101_32x8d'  # Change this to the desired model name
+        model_name = 'efficientnet_v2_1'  # Change this to the desired model name
         assert model_name in model_names, f"Model {model_name} not supported."
         print(f"\n🔧 Training model: {model_name}")
         trainer = RockClassifier(
@@ -756,18 +757,41 @@ if __name__ == '__main__':
             output_dir=trained_models_dir,
             num_epochs=40,
             batch_size=16,
-            device="cuda:5",
+            device="cuda:4",
             lr=1e-5
         )
 
         trainer.train()
 
+    if validation_option:
+
+        model_name = 'resnext101_32x8d'
+        predictor = RockClassifier(
+            model_name=model_name,
+            csv_path=csv_path,
+            output_dir=trained_models_dir,
+            num_epochs=80,
+            batch_size=16,
+            device="cuda:4",
+            lr=1e-5
+        )
+
+        model_path= os.path.join(trained_models_dir, f"{model_name}_best_mission_a.pth")
+        predictor.model.load_state_dict(torch.load(model_path))
+
+        predictor.model.eval()
+
+        val_acc, val_loss = predictor.evaluate()
+        print(f" Val Acc: {val_acc:.4f}, Val Loss: {val_loss:.4f}")
+
+
     if prediction_image_option:
-        image_paths = [os.path.join(save_folder_path, f) for f in os.listdir(save_folder_path) if f.endswith('.jpg') and "mask" not in f.lower()]
+        image_paths = [os.path.join(save_folder_path, f) for f in os.listdir(save_folder_path) if f.endswith('.jpg') and "mask" not in f.lower() and "enlarged" not in f.lower()]
         # randomly select 10 images
         image_paths = random.sample(image_paths, 10)
 
-        model_name = 'efficientnet_v2_1'  # Change this to the desired model name
+        model_name = 'efficientnet_v2_1'  # Change this to the desired model name 
+        #model_name = 'resnext101_32x8d' # 'resnext101_32x8d' is the best model for mission a
         predictor = RockClassifier(
             model_name=model_name,
             csv_path=csv_path,
@@ -793,7 +817,7 @@ if __name__ == '__main__':
 
 
     if prediction_mask_option:
-        model_name = 'efficientnet_v2_1'  # Change this to the desired model name
+        model_name = 'resnext101_32x8d'  # Change this to the desired model name
 
         predictor = RockClassifier(
             model_name=model_name,
@@ -801,7 +825,7 @@ if __name__ == '__main__':
             output_dir=trained_models_dir,
             num_epochs=80,
             batch_size=16,
-            device="cuda:2",
+            device="cuda:6",
             lr=1e-5
         )
 
@@ -823,7 +847,14 @@ if __name__ == '__main__':
         indices_list.append(indices[int((N - 1) * step):])
 
 
-        predictor.classify_masks(mask_folder_path, image_folder_path, output_folder_path, model_path=model_path, camera_parameter_file=camera_parameter_file, batch_size=batch_size, save_overlap=save_overlap, indices=indices_list[0])
+        predictor.classify_masks(mask_folder_path, 
+            image_folder_path,  
+            output_folder_path, 
+            model_path=model_path, 
+            camera_parameter_file=camera_parameter_file, 
+            batch_size=batch_size, 
+            save_overlap=save_overlap, 
+            indices=indices_list[9])
         print(f"\n✅ Classification complete. Results saved to {output_folder_path}")
 
 
