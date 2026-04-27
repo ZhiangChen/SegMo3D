@@ -55,6 +55,18 @@ For extracting **point clouds and camera parameters**, refer to:
 - [Segment Anything Model 2 (SAM2)](https://github.com/facebookresearch/sam2)  
 - [Grounding DINO](http://github.com/IDEA-Research/GroundingDINO)  
 
+## **Publication**
+Our paper is published on *Computers & Geosciences*: https://doi.org/10.1016/j.cageo.2026.106181 
+```
+@article{chen20263d,
+  title={3D semantic mapping of surface geological features},
+  author={Chen, Zhiang and McPhillips, Devin and Scharer, Katherine and Ross, Zachary E},
+  journal={Computers \& Geosciences},
+  pages={106181},
+  year={2026},
+  publisher={Elsevier}
+}
+```
 
 
 ---
